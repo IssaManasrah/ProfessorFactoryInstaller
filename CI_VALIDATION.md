@@ -1,1 +1,1 @@
-Clean Android TV validation trigger for current main build.
+Validate current main with: hidden employee PIN, QUERY_ALL_PACKAGES, REQUEST_DELETE_PACKAGES, verified support uninstall, APK shared-user preflight, USER_ACTION_NOT_REQUIRED updates, and Android 10+ multi-package batch install.
