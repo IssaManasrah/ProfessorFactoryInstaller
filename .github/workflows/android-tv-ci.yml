@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-and-tv-smoke:
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     timeout-minutes: 35
 
     steps:
@@ -38,7 +38,7 @@ jobs:
           arch: x86
           profile: tv_1080p
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -noaudio -no-boot-anim -camera-back none
           script: |
             set -euxo pipefail
             APK="app/build/outputs/apk/debug/app-debug.apk"
