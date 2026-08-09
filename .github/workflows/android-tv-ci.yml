@@ -34,16 +34,25 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platform-tools" "emulator" "system-images;android-34;android-tv;x86"
-          echo no | avdmanager create avd --force -n professor_tv --package "system-images;android-34;android-tv;x86" --device "tv_1080p"
+          SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          AVDMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | head -n 1)
+          if [ -z "$SDKMANAGER" ] || [ -z "$AVDMANAGER" ]; then
+            echo "Android command-line tools not found under $SDK_ROOT"
+            find "$SDK_ROOT" -maxdepth 4 -type f \( -name sdkmanager -o -name avdmanager \) -print || true
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "emulator" "system-images;android-34;android-tv;x86"
+          echo no | "$AVDMANAGER" create avd --force -n professor_tv --package "system-images;android-34;android-tv;x86" --device "tv_1080p"
 
       - name: Boot Android TV and smoke test app
         shell: bash
         run: |
           set -euxo pipefail
-          ADB="$ANDROID_HOME/platform-tools/adb"
-          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           PACKAGE="com.shaikhalkar.professorinstaller.debug"
           COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
