@@ -30,50 +30,81 @@ jobs:
       - name: Build debug APK with Android Gradle Plugin
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Run on Android TV Emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          target: android-tv
-          arch: x86
-          profile: tv_1080p
-          disable-animations: true
-          emulator-options: -no-window -noaudio -no-boot-anim -camera-back none
-          script: |
-            set -euxo pipefail
-            APK="app/build/outputs/apk/debug/app-debug.apk"
-            PACKAGE="com.shaikhalkar.professorinstaller.debug"
-            COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
+      - name: Install Android TV system image
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platform-tools" "emulator" "system-images;android-34;android-tv;x86"
+          echo no | avdmanager create avd --force -n professor_tv --package "system-images;android-34;android-tv;x86" --device "tv_1080p"
 
-            adb install -r "$APK"
-            adb shell am force-stop "$PACKAGE"
-            adb logcat -c
-            adb shell am start -W -n "$COMPONENT"
-            sleep 4
+      - name: Boot Android TV and smoke test app
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          PACKAGE="com.shaikhalkar.professorinstaller.debug"
+          COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
 
-            PID=$(adb shell pidof "$PACKAGE" | tr -d '\r')
-            if [ -z "$PID" ]; then
-              echo "Professor Installer process is not running"
-              adb logcat -d | tail -n 300
-              exit 1
+          "$ADB" kill-server || true
+          "$ADB" start-server
+          "$EMULATOR" -avd professor_tv -port 5554 -no-window -noaudio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect > emulator-console.log 2>&1 &
+          EMULATOR_PID=$!
+          trap 'kill "$EMULATOR_PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 180); do
+            STATE=$("$ADB" -s emulator-5554 get-state 2>/dev/null || true)
+            BOOT=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+            if [ "$STATE" = "device" ] && [ "$BOOT" = "1" ]; then
+              break
             fi
+            sleep 2
+          done
 
-            adb shell dumpsys activity activities | grep -F "$PACKAGE"
-            adb shell uiautomator dump /sdcard/window.xml || true
-            adb pull /sdcard/window.xml window.xml || true
-            grep -q "برمجة الأجهزة" window.xml
-            grep -q "تصفح التطبيقات" window.xml
-            grep -q "الدعم" window.xml
+          STATE=$("$ADB" -s emulator-5554 get-state 2>/dev/null || true)
+          BOOT=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+          if [ "$STATE" != "device" ] || [ "$BOOT" != "1" ]; then
+            echo "Android TV emulator failed to become ready"
+            "$ADB" devices -l || true
+            tail -n 300 emulator-console.log || true
+            exit 1
+          fi
 
-            adb shell input keyevent KEYCODE_DPAD_RIGHT
-            adb shell input keyevent KEYCODE_DPAD_LEFT
-            adb exec-out screencap -p > professor-tv-home.png
-            adb logcat -d > emulator-logcat.txt
+          "$ADB" -s emulator-5554 install -r "$APK"
+          "$ADB" -s emulator-5554 shell am force-stop "$PACKAGE"
+          "$ADB" -s emulator-5554 logcat -c
+          "$ADB" -s emulator-5554 shell am start -W -n "$COMPONENT"
+          sleep 5
 
-            if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat.txt; then
-              echo "Crash detected in emulator log"
-              exit 1
-            fi
+          PID=$("$ADB" -s emulator-5554 shell pidof "$PACKAGE" | tr -d '\r' || true)
+          if [ -z "$PID" ]; then
+            echo "Professor Installer crashed or failed to launch"
+            "$ADB" -s emulator-5554 logcat -d > emulator-logcat.txt || true
+            tail -n 300 emulator-logcat.txt || true
+            exit 1
+          fi
+
+          "$ADB" -s emulator-5554 shell uiautomator dump /sdcard/window.xml || true
+          "$ADB" -s emulator-5554 pull /sdcard/window.xml window.xml || true
+          "$ADB" -s emulator-5554 exec-out screencap -p > professor-tv-home.png
+          "$ADB" -s emulator-5554 logcat -d > emulator-logcat.txt
+
+          grep -q "برمجة الأجهزة" window.xml
+          grep -q "تصفح التطبيقات" window.xml
+          grep -q "الدعم" window.xml
+
+          "$ADB" -s emulator-5554 shell input keyevent KEYCODE_DPAD_RIGHT
+          "$ADB" -s emulator-5554 shell input keyevent KEYCODE_DPAD_LEFT
+          sleep 1
+
+          if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat.txt; then
+            echo "Crash detected in emulator log"
+            exit 1
+          fi
+
+          echo "ANDROID_TV_SMOKE_TEST=PASS"
 
       - name: Upload tested APK
         if: success()
@@ -91,5 +122,6 @@ jobs:
           path: |
             professor-tv-home.png
             emulator-logcat.txt
+            emulator-console.log
             window.xml
           if-no-files-found: ignore
