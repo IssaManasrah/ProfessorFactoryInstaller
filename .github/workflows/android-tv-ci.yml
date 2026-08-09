@@ -48,7 +48,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           script: |
-            set -euxo pipefail
+            set -eu
             APK="app/build/outputs/apk/debug/app-debug.apk"
             PACKAGE="com.shaikhalkar.professorinstaller.debug"
             COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
