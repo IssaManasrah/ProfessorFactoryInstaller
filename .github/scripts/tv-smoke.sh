@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euxo pipefail
-# CI retry: validate current clean Professor Installer build on Android TV.
 
 APK="app/build/outputs/apk/debug/app-debug.apk"
 PACKAGE="com.shaikhalkar.professorinstaller.debug"
-COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
+COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.ProfessorMainActivity"
 
 adb wait-for-device
 for i in 1 2 3 4 5; do
@@ -58,6 +57,14 @@ sleep 1
 adb logcat -b all -d > emulator-logcat-after-dpad.txt || true
 if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat-after-dpad.txt; then
   echo "Crash detected after D-pad smoke test"
+  exit 1
+fi
+
+# Back from the home screen must leave the app instead of rebuilding home forever.
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+if adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" | grep -q "$PACKAGE"; then
+  echo "Back key did not leave Professor Installer home screen"
   exit 1
 fi
 
