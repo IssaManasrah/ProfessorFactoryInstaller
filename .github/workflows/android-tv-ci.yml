@@ -1,0 +1,96 @@
+name: Android TV CI
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-tv-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK with Android Gradle Plugin
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Run on Android TV Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: android-tv
+          arch: x86_64
+          profile: TV_1080p
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -euxo pipefail
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            PACKAGE="com.shaikhalkar.professorinstaller.debug"
+            COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
+
+            adb install -r "$APK"
+            adb shell am force-stop "$PACKAGE"
+            adb logcat -c
+            adb shell am start -W -n "$COMPONENT"
+            sleep 4
+
+            PID=$(adb shell pidof "$PACKAGE" | tr -d '\r')
+            if [ -z "$PID" ]; then
+              echo "Professor Installer process is not running"
+              adb logcat -d | tail -n 300
+              exit 1
+            fi
+
+            adb shell dumpsys activity activities | grep -F "$PACKAGE"
+            adb shell uiautomator dump /sdcard/window.xml || true
+            adb pull /sdcard/window.xml window.xml || true
+            grep -q "برمجة الأجهزة" window.xml
+            grep -q "تصفح التطبيقات" window.xml
+            grep -q "الدعم" window.xml
+
+            adb shell input keyevent KEYCODE_DPAD_RIGHT
+            adb shell input keyevent KEYCODE_DPAD_LEFT
+            adb shell input keyevent KEYCODE_DPAD_CENTER
+            sleep 1
+
+            adb exec-out screencap -p > professor-tv-home.png
+            adb logcat -d > emulator-logcat.txt
+
+            if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat.txt; then
+              echo "Crash detected in emulator log"
+              exit 1
+            fi
+
+      - name: Upload tested APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProfessorInstaller-TV-tested-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload TV smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProfessorInstaller-TV-smoke-evidence
+          path: |
+            professor-tv-home.png
+            emulator-logcat.txt
+            window.xml
+          if-no-files-found: ignore
