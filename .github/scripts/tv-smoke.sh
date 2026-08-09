@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euxo pipefail
+# CI retry: validate current clean Professor Installer build on Android TV.
 
 APK="app/build/outputs/apk/debug/app-debug.apk"
 PACKAGE="com.shaikhalkar.professorinstaller.debug"
