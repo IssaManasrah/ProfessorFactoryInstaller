@@ -37,11 +37,6 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
           SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)
           AVDMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | head -n 1)
-          if [ -z "$SDKMANAGER" ] || [ -z "$AVDMANAGER" ]; then
-            echo "Android command-line tools not found under $SDK_ROOT"
-            find "$SDK_ROOT" -maxdepth 4 -type f \( -name sdkmanager -o -name avdmanager \) -print || true
-            exit 1
-          fi
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platform-tools" "emulator" "system-images;android-34;android-tv;x86"
           echo no | "$AVDMANAGER" create avd --force -n professor_tv --package "system-images;android-34;android-tv;x86" --device "tv_1080p"
@@ -81,16 +76,30 @@ jobs:
             exit 1
           fi
 
-          "$ADB" -s emulator-5554 install -r "$APK"
+          # Avoid streamed-install transport issues and capture PackageManager's real result.
+          "$ADB" -s emulator-5554 logcat -c
+          "$ADB" -s emulator-5554 push "$APK" /data/local/tmp/professor-installer.apk
+          set +e
+          INSTALL_OUTPUT=$("$ADB" -s emulator-5554 shell pm install -r /data/local/tmp/professor-installer.apk 2>&1)
+          INSTALL_RC=$?
+          set -e
+          printf '%s\n' "$INSTALL_OUTPUT" | tee install-result.txt
+          "$ADB" -s emulator-5554 logcat -b all -d > package-manager-logcat.txt || true
+          if [ $INSTALL_RC -ne 0 ] || ! printf '%s\n' "$INSTALL_OUTPUT" | grep -q '^Success'; then
+            echo "PackageManager install failed (rc=$INSTALL_RC)"
+            grep -Ei "PackageManager|PackageInstaller|INSTALL_|parse|signature|permission|professor" package-manager-logcat.txt | tail -n 300 || true
+            exit 1
+          fi
+
           "$ADB" -s emulator-5554 shell am force-stop "$PACKAGE"
           "$ADB" -s emulator-5554 logcat -c
           "$ADB" -s emulator-5554 shell am start -W -n "$COMPONENT"
           sleep 5
 
           PID=$("$ADB" -s emulator-5554 shell pidof "$PACKAGE" | tr -d '\r' || true)
+          "$ADB" -s emulator-5554 logcat -b all -d > emulator-logcat.txt || true
           if [ -z "$PID" ]; then
             echo "Professor Installer crashed or failed to launch"
-            "$ADB" -s emulator-5554 logcat -d > emulator-logcat.txt || true
             tail -n 300 emulator-logcat.txt || true
             exit 1
           fi
@@ -98,7 +107,6 @@ jobs:
           "$ADB" -s emulator-5554 shell uiautomator dump /sdcard/window.xml || true
           "$ADB" -s emulator-5554 pull /sdcard/window.xml window.xml || true
           "$ADB" -s emulator-5554 exec-out screencap -p > professor-tv-home.png
-          "$ADB" -s emulator-5554 logcat -d > emulator-logcat.txt
 
           grep -q "برمجة الأجهزة" window.xml
           grep -q "تصفح التطبيقات" window.xml
@@ -133,4 +141,6 @@ jobs:
             emulator-logcat.txt
             emulator-console.log
             window.xml
+            install-result.txt
+            package-manager-logcat.txt
           if-no-files-found: ignore
