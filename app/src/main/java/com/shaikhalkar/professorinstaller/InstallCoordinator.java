@@ -40,6 +40,7 @@ final class InstallCoordinator {
         final Models.AppInfo app;
         final boolean offlineFirst;
         final ArrayList<String> removePackages = new ArrayList<>();
+
         Task(Models.AppInfo app, boolean offlineFirst) {
             this.app = app;
             this.offlineFirst = offlineFirst;
@@ -47,33 +48,33 @@ final class InstallCoordinator {
     }
 
     private static final class ResolvedTask {
-        final Task task;
         final File apk;
         final String source;
-        ResolvedTask(Task task, File apk, String source) {
-            this.task = task;
+
+        ResolvedTask(File apk, String source) {
             this.apk = apk;
             this.source = source;
         }
     }
 
     private static final AtomicInteger REQUESTS = new AtomicInteger(7000);
+
     private final Host host;
     private final UsbResolver usb = new UsbResolver();
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<Task> queue = new ArrayList<>();
 
-    private int index = 0;
-    private int removeIndex = 0;
-    private int success = 0;
-    private int skipped = 0;
-    private int failed = 0;
-    private int batchInstallCount = 0;
-    private boolean running = false;
-    private boolean waitingInstall = false;
-    private boolean waitingUnknownSources = false;
-    private boolean batchMode = false;
+    private int index;
+    private int removeIndex;
+    private int success;
+    private int skipped;
+    private int failed;
+
+    private boolean running;
+    private boolean waitingInstall;
+    private boolean waitingUnknownSources;
     private File pendingApk;
+    private String pendingSource = "-";
 
     InstallCoordinator(Host host) {
         this.host = host;
@@ -85,10 +86,10 @@ final class InstallCoordinator {
 
     void start(List<Task> tasks) {
         LinkedHashMap<String, Task> deduped = new LinkedHashMap<>();
-        for (Task t : tasks) {
-            if (t == null || t.app == null) continue;
-            String key = t.app.queueKey();
-            if (!deduped.containsKey(key)) deduped.put(key, t);
+        for (Task task : tasks) {
+            if (task == null || task.app == null) continue;
+            String key = task.app.queueKey();
+            if (!deduped.containsKey(key)) deduped.put(key, task);
         }
 
         queue.clear();
@@ -98,12 +99,11 @@ final class InstallCoordinator {
         success = 0;
         skipped = 0;
         failed = 0;
-        batchInstallCount = 0;
+        running = !queue.isEmpty();
         waitingInstall = false;
         waitingUnknownSources = false;
         pendingApk = null;
-        running = !queue.isEmpty();
-        batchMode = canUseBatch(queue);
+        pendingSource = "-";
 
         host.showQueueScreen();
         if (!running) {
@@ -113,68 +113,62 @@ final class InstallCoordinator {
 
         if (!canInstallPackages(host.activity())) {
             waitingUnknownSources = true;
-            host.onQueueStatus("صلاحية التثبيت", "اسمح لـ Professor Installer بتثبيت التطبيقات مرة واحدة", 0, true);
-            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            host.onQueueStatus(
+                    "صلاحية التثبيت",
+                    "اسمح لـ Professor Installer بتثبيت التطبيقات مرة واحدة",
+                    0,
+                    true);
+            Intent intent = new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + host.activity().getPackageName()));
-            host.activity().startActivity(i);
+            host.activity().startActivity(intent);
             return;
         }
 
-        beginExecution();
+        processCurrent();
     }
 
     void onHostResume() {
         if (!running || !waitingUnknownSources) return;
-        if (canInstallPackages(host.activity())) {
-            waitingUnknownSources = false;
-            if (pendingApk != null && !batchMode) stageInstall(pendingApk);
-            else beginExecution();
+        if (!canInstallPackages(host.activity())) return;
+
+        waitingUnknownSources = false;
+        if (pendingApk != null) {
+            stageInstall(pendingApk);
+        } else {
+            processCurrent();
         }
     }
 
     void onInstallResult(int status, String message) {
         if (!running || !waitingInstall) return;
         waitingInstall = false;
-        pendingApk = null;
-
-        if (batchMode) {
-            if (status == PackageInstaller.STATUS_SUCCESS) {
-                success += batchInstallCount;
-                host.onQueueStatus("تم تجهيز الجهاز", "تم تثبيت المجموعة بنجاح ✓", 100, false);
-                running = false;
-                host.onQueueComplete(success, skipped, failed);
-            } else {
-                host.onQueueError("تعذر التثبيت الجماعي", friendlyInstallMessage(message));
-            }
-            return;
-        }
 
         if (status == PackageInstaller.STATUS_SUCCESS) {
             success++;
             host.onQueueStatus(currentName(), "تم التثبيت بنجاح ✓", 100, false);
             advance();
-        } else {
-            failed++;
-            host.onQueueError("تعذر تثبيت " + currentName(), friendlyInstallMessage(message));
+            return;
         }
+
+        failed++;
+        host.onQueueError(
+                "تعذر تثبيت " + currentName(),
+                friendlyInstallMessage(message));
     }
 
     void retryCurrent() {
         if (!running) return;
         waitingInstall = false;
-        pendingApk = null;
-        if (batchMode) prepareBatch();
-        else processCurrent();
+        if (pendingApk != null) {
+            stageInstall(pendingApk);
+        } else {
+            processCurrent();
+        }
     }
 
     void skipCurrent() {
         if (!running) return;
-        if (batchMode) {
-            failed += batchInstallCount;
-            running = false;
-            host.onQueueComplete(success, skipped, failed);
-            return;
-        }
         skipped++;
         advance();
     }
@@ -185,238 +179,28 @@ final class InstallCoordinator {
         waitingInstall = false;
         waitingUnknownSources = false;
         pendingApk = null;
+        pendingSource = "-";
     }
 
     void onUninstallReturned() {
-        if (!running || batchMode || index >= queue.size()) return;
-        Task t = queue.get(index);
-        if (removeIndex >= t.removePackages.size()) {
+        if (!running || index >= queue.size()) return;
+
+        Task task = queue.get(index);
+        if (removeIndex >= task.removePackages.size()) {
             processRemovalsThenInstall();
             return;
         }
 
-        String pkg = t.removePackages.get(removeIndex);
+        String pkg = task.removePackages.get(removeIndex);
         if (pkg != null && !pkg.isEmpty() && isInstalled(host.activity(), pkg)) {
-            host.onQueueError("تعذر حذف التطبيق القديم",
-                    "التطبيق " + pkg + " ما زال موجودًا على الجهاز. وافق على شاشة الحذف ثم أعد المحاولة.");
+            host.onQueueError(
+                    "تعذر حذف التطبيق القديم",
+                    "التطبيق " + pkg + " ما زال موجودًا. وافق على شاشة الحذف ثم أعد المحاولة.");
             return;
         }
 
         removeIndex++;
         processRemovalsThenInstall();
-    }
-
-    private void beginExecution() {
-        if (batchMode) prepareBatch();
-        else processCurrent();
-    }
-
-    private boolean canUseBatch(List<Task> tasks) {
-        if (Build.VERSION.SDK_INT < 29 || tasks.size() < 2) return false;
-        for (Task t : tasks) {
-            if (!t.removePackages.isEmpty()) return false;
-        }
-        return true;
-    }
-
-    private void prepareBatch() {
-        if (!running) return;
-        io.execute(() -> {
-            ArrayList<ResolvedTask> ready = new ArrayList<>();
-            try {
-                int total = queue.size();
-                for (int i = 0; i < total; i++) {
-                    if (!running) return;
-                    Task t = queue.get(i);
-                    final int pos = i + 1;
-                    runUi(() -> {
-                        host.onQueuePosition(pos, total, t.offlineFirst ? "USB / Online" : "Online");
-                        host.onQueueStatus(t.app.name, "فحص التطبيق...", 0, true);
-                    });
-
-                    if (isVersionSatisfied(host.activity(), t.app)) {
-                        skipped++;
-                        runUi(() -> host.onQueueStatus(t.app.name, "موجود بأحدث إصدار ✓", 100, false));
-                        continue;
-                    }
-
-                    ResolvedTask resolved = resolveBlocking(t, pos, total);
-                    String issue = compatibilityIssue(resolved.apk, t.app);
-                    if (issue != null) {
-                        skipped++;
-                        runUi(() -> host.onQueueStatus(t.app.name, issue, 100, false));
-                        continue;
-                    }
-                    ready.add(resolved);
-                }
-
-                if (ready.isEmpty()) {
-                    runUi(() -> {
-                        running = false;
-                        host.onQueueComplete(success, skipped, failed);
-                    });
-                    return;
-                }
-
-                stageBatch(ready);
-            } catch (Exception e) {
-                runUi(() -> {
-                    failed++;
-                    host.onQueueError("تعذر تجهيز مجموعة التطبيقات",
-                            e.getMessage() == null ? e.toString() : e.getMessage());
-                });
-            }
-        });
-    }
-
-    private ResolvedTask resolveBlocking(Task t, int pos, int total) throws Exception {
-        if (t.offlineFirst) {
-            File local = usb.findApk(host.activity(), t.app);
-            if (local != null) {
-                runUi(() -> {
-                    host.onQueuePosition(pos, total, "USB");
-                    host.onQueueStatus(t.app.name, "تم العثور عليه على الفلاشة ✓", 100, false);
-                });
-                return new ResolvedTask(t, local, "USB");
-            }
-        }
-
-        File cache = cacheFile(host.activity(), t.app);
-        if (cache.isFile() && validFile(cache, t.app)) {
-            runUi(() -> {
-                host.onQueuePosition(pos, total, "Cache");
-                host.onQueueStatus(t.app.name, "استخدام الملف المحفوظ ✓", 100, false);
-            });
-            return new ResolvedTask(t, cache, "Cache");
-        }
-
-        if (t.app.downloadUrl == null || t.app.downloadUrl.isEmpty()) {
-            throw new IllegalStateException("رابط APK غير متوفر من API للتطبيق " + t.app.name);
-        }
-
-        runUi(() -> {
-            host.onQueuePosition(pos, total, "Online");
-            host.onQueueStatus(t.app.name, "جاري التنزيل...", 0, false);
-        });
-        downloadBlocking(t, cache);
-        return new ResolvedTask(t, cache, "Online");
-    }
-
-    private void downloadBlocking(Task t, File dest) throws Exception {
-        HttpURLConnection con = (HttpURLConnection) new URL(t.app.downloadUrl).openConnection();
-        con.setConnectTimeout(15000);
-        con.setReadTimeout(45000);
-        con.setInstanceFollowRedirects(true);
-        int status = con.getResponseCode();
-        if (status < 200 || status >= 300) {
-            con.disconnect();
-            throw new IllegalStateException("HTTP " + status + " للتطبيق " + t.app.name);
-        }
-
-        long total = con.getContentLengthLong();
-        File tmp = new File(dest.getParentFile(), dest.getName() + ".part");
-        InputStream in = con.getInputStream();
-        FileOutputStream out = new FileOutputStream(tmp);
-        byte[] buf = new byte[128 * 1024];
-        long done = 0;
-        int n;
-        while ((n = in.read(buf)) > 0) {
-            out.write(buf, 0, n);
-            done += n;
-            if (total > 0) {
-                int p = (int) Math.min(100, (done * 100L) / total);
-                runUi(() -> host.onQueueStatus(t.app.name, "جاري التنزيل... " + p + "%", p, false));
-            }
-        }
-        out.flush();
-        out.close();
-        in.close();
-        con.disconnect();
-
-        if (!validFile(tmp, t.app)) {
-            tmp.delete();
-            throw new IllegalStateException("فشل التحقق من ملف APK للتطبيق " + t.app.name);
-        }
-        if (dest.exists()) dest.delete();
-        if (!tmp.renameTo(dest)) throw new IllegalStateException("تعذر حفظ APK في الكاش");
-        runUi(() -> host.onQueueStatus(t.app.name, "اكتمل التنزيل ✓", 100, false));
-    }
-
-    private void stageBatch(List<ResolvedTask> ready) throws Exception {
-        PackageInstaller installer = host.activity().getPackageManager().getPackageInstaller();
-        ArrayList<Integer> childIds = new ArrayList<>();
-        int parentId = -1;
-        try {
-            PackageInstaller.SessionParams parentParams =
-                    new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-            parentParams.setMultiPackage();
-            if (Build.VERSION.SDK_INT >= 31) {
-                parentParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
-                parentParams.setInstallScenario(PackageManager.INSTALL_SCENARIO_BULK);
-            }
-            parentId = installer.createSession(parentParams);
-            PackageInstaller.Session parent = installer.openSession(parentId);
-
-            int pos = 0;
-            for (ResolvedTask r : ready) {
-                pos++;
-                final int fp = pos;
-                runUi(() -> {
-                    host.onQueuePosition(fp, ready.size(), r.source);
-                    host.onQueueStatus(r.task.app.name, "تجهيز التثبيت الجماعي...", 100, true);
-                });
-
-                PackageInstaller.SessionParams childParams =
-                        new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-                if (r.task.app.packageName != null && !r.task.app.packageName.isEmpty()) {
-                    childParams.setAppPackageName(r.task.app.packageName);
-                }
-                childParams.setSize(r.apk.length());
-                if (Build.VERSION.SDK_INT >= 31) {
-                    childParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
-                    childParams.setInstallScenario(PackageManager.INSTALL_SCENARIO_BULK);
-                }
-
-                int childId = installer.createSession(childParams);
-                childIds.add(childId);
-                PackageInstaller.Session child = installer.openSession(childId);
-                OutputStream out = child.openWrite("base.apk", 0, r.apk.length());
-                FileInputStream in = new FileInputStream(r.apk);
-                byte[] buf = new byte[128 * 1024];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                child.fsync(out);
-                out.close();
-                in.close();
-                child.close();
-                parent.addChildSessionId(childId);
-            }
-
-            Intent callback = new Intent(host.activity(), InstallStatusReceiver.class);
-            callback.setAction("INSTALL_BATCH_STATUS_" + parentId);
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
-            PendingIntent pi = PendingIntent.getBroadcast(
-                    host.activity(), REQUESTS.incrementAndGet(), callback, flags);
-
-            batchInstallCount = ready.size();
-            waitingInstall = true;
-            runUi(() -> host.onQueueStatus(
-                    "جاهز للتثبيت",
-                    "تم تجهيز " + batchInstallCount + " تطبيق. وافق على شاشة Android لإكمال المجموعة.",
-                    100,
-                    true));
-            parent.commit(pi.getIntentSender());
-            parent.close();
-        } catch (Exception e) {
-            if (parentId >= 0) {
-                try { installer.abandonSession(parentId); } catch (Exception ignored) {}
-            }
-            for (Integer id : childIds) {
-                try { installer.abandonSession(id); } catch (Exception ignored) {}
-            }
-            throw e;
-        }
     }
 
     private void processCurrent() {
@@ -426,110 +210,266 @@ final class InstallCoordinator {
             host.onQueueComplete(success, skipped, failed);
             return;
         }
+
+        pendingApk = null;
+        pendingSource = "-";
         removeIndex = 0;
-        Task t = queue.get(index);
-        host.onQueuePosition(index + 1, queue.size(), t.offlineFirst ? "USB / Online" : "Online");
-        host.onQueueStatus(t.app.name, "فحص الجهاز...", 0, true);
+
+        Task task = queue.get(index);
+        host.onQueuePosition(
+                index + 1,
+                queue.size(),
+                task.offlineFirst ? "USB / Online" : "Online");
+        host.onQueueStatus(task.app.name, "فحص الجهاز...", 0, true);
         processRemovalsThenInstall();
     }
 
     private void processRemovalsThenInstall() {
-        Task t = queue.get(index);
-        while (removeIndex < t.removePackages.size()) {
-            String pkg = t.removePackages.get(removeIndex);
+        if (!running || index >= queue.size()) return;
+        Task task = queue.get(index);
+
+        while (removeIndex < task.removePackages.size()) {
+            String pkg = task.removePackages.get(removeIndex);
             if (pkg == null || pkg.isEmpty() || !isInstalled(host.activity(), pkg)) {
                 removeIndex++;
                 continue;
             }
-            host.onQueueStatus(t.app.name, "حذف التطبيق القديم: " + pkg, 0, true);
+
+            host.onQueueStatus(
+                    task.app.name,
+                    "حذف التطبيق القديم: " + pkg,
+                    0,
+                    true);
             host.launchUninstall(pkg);
             return;
         }
 
-        if (isVersionSatisfied(host.activity(), t.app)) {
+        if (isVersionSatisfied(host.activity(), task.app)) {
             skipped++;
-            host.onQueueStatus(t.app.name, "موجود بأحدث إصدار ✓", 100, false);
+            host.onQueueStatus(task.app.name, "موجود بأحدث إصدار ✓", 100, false);
             advance();
             return;
         }
-        resolveApk(t);
+
+        resolveApk(task);
     }
 
-    private void resolveApk(Task t) {
+    private void resolveApk(Task task) {
+        final int position = index + 1;
+        final int total = queue.size();
+
         io.execute(() -> {
             try {
-                ResolvedTask resolved = resolveBlocking(t, index + 1, queue.size());
-                runUi(() -> prepareInstall(resolved.apk));
+                ResolvedTask resolved = resolveBlocking(task, position, total);
+                String issue = compatibilityIssue(resolved.apk, task.app);
+                if (issue != null) {
+                    runUi(() -> {
+                        failed++;
+                        host.onQueueError("نسخة APK غير متوافقة", issue);
+                    });
+                    return;
+                }
+
+                runUi(() -> {
+                    pendingApk = resolved.apk;
+                    pendingSource = resolved.source;
+                    host.onQueuePosition(position, total, resolved.source);
+                    prepareInstall(resolved.apk);
+                });
             } catch (Exception e) {
                 runUi(() -> {
                     failed++;
-                    host.onQueueError("تعذر تجهيز " + t.app.name,
+                    host.onQueueError(
+                            "تعذر تجهيز " + task.app.name,
                             e.getMessage() == null ? e.toString() : e.getMessage());
                 });
             }
         });
     }
 
+    private ResolvedTask resolveBlocking(Task task, int position, int total) throws Exception {
+        if (task.offlineFirst) {
+            File local = usb.findApk(host.activity(), task.app);
+            if (local != null && validFile(local, task.app)) {
+                runUi(() -> {
+                    host.onQueuePosition(position, total, "USB");
+                    host.onQueueStatus(task.app.name, "تم العثور عليه على الفلاشة ✓", 100, false);
+                });
+                return new ResolvedTask(local, "USB");
+            }
+        }
+
+        File cache = cacheFile(host.activity(), task.app);
+        if (cache.isFile() && validFile(cache, task.app)) {
+            runUi(() -> {
+                host.onQueuePosition(position, total, "Cache");
+                host.onQueueStatus(task.app.name, "استخدام الملف المحفوظ ✓", 100, false);
+            });
+            return new ResolvedTask(cache, "Cache");
+        }
+
+        if (task.app.downloadUrl == null || task.app.downloadUrl.isEmpty()) {
+            throw new IllegalStateException(
+                    "رابط APK غير متوفر من API للتطبيق " + task.app.name);
+        }
+
+        runUi(() -> {
+            host.onQueuePosition(position, total, "Online");
+            host.onQueueStatus(task.app.name, "جاري التنزيل...", 0, false);
+        });
+
+        downloadBlocking(task, cache);
+        return new ResolvedTask(cache, "Online");
+    }
+
+    private void downloadBlocking(Task task, File destination) throws Exception {
+        HttpURLConnection connection =
+                (HttpURLConnection) new URL(task.app.downloadUrl).openConnection();
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(45000);
+        connection.setInstanceFollowRedirects(true);
+
+        int status = connection.getResponseCode();
+        if (status < 200 || status >= 300) {
+            connection.disconnect();
+            throw new IllegalStateException(
+                    "HTTP " + status + " للتطبيق " + task.app.name);
+        }
+
+        long total = connection.getContentLengthLong();
+        File part = new File(destination.getParentFile(), destination.getName() + ".part");
+
+        try (InputStream input = connection.getInputStream();
+             FileOutputStream output = new FileOutputStream(part)) {
+            byte[] buffer = new byte[128 * 1024];
+            long done = 0;
+            int read;
+            while ((read = input.read(buffer)) > 0) {
+                output.write(buffer, 0, read);
+                done += read;
+                if (total > 0) {
+                    int progress = (int) Math.min(100, (done * 100L) / total);
+                    runUi(() -> host.onQueueStatus(
+                            task.app.name,
+                            "جاري التنزيل... " + progress + "%",
+                            progress,
+                            false));
+                }
+            }
+            output.flush();
+        } finally {
+            connection.disconnect();
+        }
+
+        if (!validFile(part, task.app)) {
+            part.delete();
+            throw new IllegalStateException(
+                    "فشل التحقق من ملف APK للتطبيق " + task.app.name);
+        }
+
+        if (destination.exists() && !destination.delete()) {
+            throw new IllegalStateException("تعذر تحديث الملف الموجود في الكاش");
+        }
+        if (!part.renameTo(destination)) {
+            throw new IllegalStateException("تعذر حفظ APK في الكاش");
+        }
+
+        runUi(() -> host.onQueueStatus(task.app.name, "اكتمل التنزيل ✓", 100, false));
+    }
+
     private void prepareInstall(File apk) {
-        Models.AppInfo app = queue.get(index).app;
-        String issue = compatibilityIssue(apk, app);
-        if (issue != null) {
-            failed++;
-            host.onQueueError("نسخة APK غير متوافقة", issue);
+        if (!canInstallPackages(host.activity())) {
+            waitingUnknownSources = true;
+            host.onQueueStatus(
+                    currentName(),
+                    "اسمح لـ Professor Installer بتثبيت التطبيقات",
+                    100,
+                    false);
+            Intent intent = new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + host.activity().getPackageName()));
+            host.activity().startActivity(intent);
             return;
         }
 
-        pendingApk = apk;
-        if (!canInstallPackages(host.activity())) {
-            waitingUnknownSources = true;
-            host.onQueueStatus(currentName(), "اسمح لـ Professor Installer بتثبيت التطبيقات", 100, false);
-            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + host.activity().getPackageName()));
-            host.activity().startActivity(i);
-            return;
-        }
         stageInstall(apk);
     }
 
     private void stageInstall(File apk) {
+        if (!running || index >= queue.size()) return;
+
+        PackageInstaller.Session session = null;
         try {
-            PackageInstaller installer = host.activity().getPackageManager().getPackageInstaller();
-            PackageInstaller.SessionParams params =
-                    new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            PackageInstaller installer =
+                    host.activity().getPackageManager().getPackageInstaller();
             Models.AppInfo app = queue.get(index).app;
-            if (app.packageName != null && !app.packageName.isEmpty()) params.setAppPackageName(app.packageName);
+
+            PackageInstaller.SessionParams params =
+                    new PackageInstaller.SessionParams(
+                            PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            if (app.packageName != null && !app.packageName.isEmpty()) {
+                params.setAppPackageName(app.packageName);
+            }
             params.setSize(apk.length());
+
+            // This app intentionally uses semi-automatic installation.
+            // Android must show its own confirmation UI for every APK.
             if (Build.VERSION.SDK_INT >= 31) {
-                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+                params.setRequireUserAction(
+                        PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
             }
 
             int sessionId = installer.createSession(params);
-            PackageInstaller.Session session = installer.openSession(sessionId);
-            host.onQueueStatus(app.name, "تجهيز شاشة التثبيت...", 100, true);
-            OutputStream out = session.openWrite("base.apk", 0, apk.length());
-            FileInputStream in = new FileInputStream(apk);
-            byte[] buf = new byte[128 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            session.fsync(out);
-            out.close();
-            in.close();
+            session = installer.openSession(sessionId);
+
+            host.onQueuePosition(index + 1, queue.size(), pendingSource);
+            host.onQueueStatus(
+                    app.name,
+                    "تجهيز شاشة التثبيت...",
+                    100,
+                    true);
+
+            try (OutputStream output = session.openWrite("base.apk", 0, apk.length());
+                 FileInputStream input = new FileInputStream(apk)) {
+                byte[] buffer = new byte[128 * 1024];
+                int read;
+                while ((read = input.read(buffer)) > 0) {
+                    output.write(buffer, 0, read);
+                }
+                session.fsync(output);
+            }
 
             Intent callback = new Intent(host.activity(), InstallStatusReceiver.class);
             callback.setAction("INSTALL_STATUS_" + sessionId);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
-            PendingIntent pi = PendingIntent.getBroadcast(
-                    host.activity(), REQUESTS.incrementAndGet(), callback, flags);
+            PendingIntent resultIntent = PendingIntent.getBroadcast(
+                    host.activity(),
+                    REQUESTS.incrementAndGet(),
+                    callback,
+                    flags);
+
             waitingInstall = true;
-            host.onQueueStatus(app.name, "بانتظار موافقة Android عند الحاجة...", 100, true);
-            session.commit(pi.getIntentSender());
-            session.close();
+            host.onQueueStatus(
+                    app.name,
+                    "بانتظار ضغط Install من شاشة Android...",
+                    100,
+                    true);
+
+            session.commit(resultIntent.getIntentSender());
         } catch (Exception e) {
             waitingInstall = false;
             failed++;
-            host.onQueueError("تعذر بدء تثبيت " + currentName(),
+            host.onQueueError(
+                    "تعذر بدء تثبيت " + currentName(),
                     e.getMessage() == null ? e.toString() : e.getMessage());
+        } finally {
+            if (session != null) {
+                try {
+                    session.close();
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 
@@ -540,53 +480,73 @@ final class InstallCoordinator {
             if (archive == null || archive.packageName == null || archive.packageName.isEmpty()) {
                 return "تعذر قراءة معلومات APK. الملف قد يكون تالفًا أو غير مكتمل.";
             }
-            if (app.packageName != null && !app.packageName.isEmpty()
+
+            if (app.packageName != null
+                    && !app.packageName.isEmpty()
                     && !app.packageName.equals(archive.packageName)) {
                 return "الـPackage داخل الملف هو " + archive.packageName
-                        + " بينما الـAPI يتوقع " + app.packageName + ". راجع ملف التطبيق في اللوحة.";
+                        + " بينما الـAPI يتوقع " + app.packageName
+                        + ". راجع ملف التطبيق في اللوحة.";
             }
+
             if (archive.sharedUserId != null
                     && archive.sharedUserId.startsWith("android.uid.")) {
                 return "هذا APK نسخة نظامية تستخدم shared user: " + archive.sharedUserId
-                        + ". تحتاج توقيع منصة المصنع المطابق لنفس Firmware، ولا يمكن تثبيتها كتطبيق عادي. "
-                        + "ارفع من اللوحة نسخة User عادية أو نسخة Platform-signed الصحيحة.";
+                        + ". تحتاج توقيع منصة المصنع المطابق لنفس Firmware.";
             }
+
             return null;
         } catch (Exception e) {
-            return "تعذر فحص توافق APK: " + (e.getMessage() == null ? e.toString() : e.getMessage());
+            return "تعذر فحص توافق APK: "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage());
         }
     }
 
     private String friendlyInstallMessage(String message) {
-        String m = message == null ? "" : message;
-        if (m.contains("INSTALL_FAILED_SHARED_USER_INCOMPATIBLE")
-                || m.contains("shared user android.uid.system")) {
+        String text = message == null ? "" : message;
+
+        if (text.contains("INSTALL_FAILED_VERIFICATION_FAILURE")
+                || text.contains("Install not allowed")) {
+            return "Android رفض التثبيت أثناء التحقق من الحزمة. تمت إزالة وضع التثبيت الجماعي/الصامت؛ "
+                    + "أعد المحاولة بالتثبيت الفردي واضغط Install من شاشة Android.";
+        }
+
+        if (text.contains("INSTALL_FAILED_SHARED_USER_INCOMPATIBLE")
+                || text.contains("shared user android.uid.system")) {
             return "الـAPK نسخة System وتوقيعها لا يطابق توقيع Firmware. استخدم نسخة User عادية "
                     + "أو نسخة موقعة بمفتاح منصة المصنع الصحيح.";
         }
-        if (m.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
-                || m.contains("signatures do not match")) {
+
+        if (text.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+                || text.contains("signatures do not match")) {
             return "يوجد إصدار مثبت بنفس Package لكن بتوقيع مختلف. احذفه أولًا أو استخدم APK بنفس التوقيع.";
         }
-        if (m.isEmpty()) return "فشل PackageInstaller بدون رسالة إضافية";
-        return m;
+
+        if (text.isEmpty()) {
+            return "فشل PackageInstaller بدون رسالة إضافية";
+        }
+        return text;
     }
 
     private void advance() {
         index++;
         removeIndex = 0;
         pendingApk = null;
+        pendingSource = "-";
         waitingInstall = false;
         host.activity().getWindow().getDecorView().postDelayed(this::processCurrent, 650);
     }
 
     private String currentName() {
-        return index >= 0 && index < queue.size() ? queue.get(index).app.name : "التطبيق";
+        return index >= 0 && index < queue.size()
+                ? queue.get(index).app.name
+                : "التطبيق";
     }
 
     private static File cacheFile(Context context, Models.AppInfo app) {
         File dir = new File(context.getCacheDir(), "apk-cache");
         if (!dir.exists()) dir.mkdirs();
+
         String name = app.fileName == null || app.fileName.isEmpty()
                 ? app.id + "-" + app.versionCode + ".apk"
                 : app.fileName;
@@ -594,38 +554,42 @@ final class InstallCoordinator {
         return new File(dir, name);
     }
 
-    private static boolean validFile(File f, Models.AppInfo app) {
-        if (!f.isFile() || f.length() < 1024) return false;
-        return app.sha256 == null || app.sha256.isEmpty()
-                || app.sha256.equalsIgnoreCase(UsbResolver.sha256(f));
+    private static boolean validFile(File file, Models.AppInfo app) {
+        if (!file.isFile() || file.length() < 1024) return false;
+        return app.sha256 == null
+                || app.sha256.isEmpty()
+                || app.sha256.equalsIgnoreCase(UsbResolver.sha256(file));
     }
 
-    static boolean canInstallPackages(Context c) {
-        return Build.VERSION.SDK_INT < 26 || c.getPackageManager().canRequestPackageInstalls();
+    static boolean canInstallPackages(Context context) {
+        return Build.VERSION.SDK_INT < 26
+                || context.getPackageManager().canRequestPackageInstalls();
     }
 
-    static boolean isInstalled(Context c, String pkg) {
-        if (pkg == null || pkg.isEmpty()) return false;
+    static boolean isInstalled(Context context, String packageName) {
+        if (packageName == null || packageName.isEmpty()) return false;
         try {
-            c.getPackageManager().getPackageInfo(pkg, 0);
+            context.getPackageManager().getPackageInfo(packageName, 0);
             return true;
         } catch (Exception e) {
             return false;
         }
     }
 
-    static boolean isVersionSatisfied(Context c, Models.AppInfo app) {
+    static boolean isVersionSatisfied(Context context, Models.AppInfo app) {
         if (app.packageName == null || app.packageName.isEmpty()) return false;
         try {
-            PackageInfo p = c.getPackageManager().getPackageInfo(app.packageName, 0);
-            long installed = Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
+            PackageInfo info = context.getPackageManager().getPackageInfo(app.packageName, 0);
+            long installed = Build.VERSION.SDK_INT >= 28
+                    ? info.getLongVersionCode()
+                    : info.versionCode;
             return installed >= app.versionCode;
         } catch (Exception e) {
             return false;
         }
     }
 
-    private void runUi(Runnable r) {
-        host.activity().runOnUiThread(r);
+    private void runUi(Runnable runnable) {
+        host.activity().runOnUiThread(runnable);
     }
 }
