@@ -36,7 +36,7 @@ jobs:
           api-level: 34
           target: android-tv
           arch: x86
-          profile: TV_1080p
+          profile: tv_1080p
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
