@@ -3,6 +3,8 @@ name: Android TV CI
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -65,9 +67,6 @@ jobs:
 
             adb shell input keyevent KEYCODE_DPAD_RIGHT
             adb shell input keyevent KEYCODE_DPAD_LEFT
-            adb shell input keyevent KEYCODE_DPAD_CENTER
-            sleep 1
-
             adb exec-out screencap -p > professor-tv-home.png
             adb logcat -d > emulator-logcat.txt
 
