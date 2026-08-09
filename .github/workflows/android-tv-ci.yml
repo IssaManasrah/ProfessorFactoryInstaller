@@ -31,113 +31,84 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          if [ -e /dev/kvm ]; then
-            sudo chmod 666 /dev/kvm
-            ls -l /dev/kvm
-          else
-            echo "KVM device is not available on this runner"
-            exit 1
-          fi
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm
 
       - name: Build debug APK with Android Gradle Plugin
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Install Android TV image and create AVD
-        shell: bash
-        run: |
-          set -euxo pipefail
-          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          AVDMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "emulator" "system-images;android-34;android-tv;x86"
-          echo no | "$AVDMANAGER" create avd --force -n professor_tv --package "system-images;android-34;android-tv;x86" --device "tv_1080p"
+      - name: Android TV emulator smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: |
+            set -euxo pipefail
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            PACKAGE="com.shaikhalkar.professorinstaller.debug"
+            COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
 
-      - name: Boot Android TV and smoke test app
-        shell: bash
-        run: |
-          set -euxo pipefail
-          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          ADB="$SDK_ROOT/platform-tools/adb"
-          EMULATOR="$SDK_ROOT/emulator/emulator"
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          PACKAGE="com.shaikhalkar.professorinstaller.debug"
-          COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.MainActivity"
+            adb wait-for-device
+            for i in 1 2 3 4 5; do
+              STATE=$(adb get-state | tr -d '\r')
+              BOOT=$(adb shell getprop sys.boot_completed | tr -d '\r')
+              echo "stability[$i]: state=$STATE boot=$BOOT"
+              test "$STATE" = "device"
+              test "$BOOT" = "1"
+              sleep 2
+            done
 
-          "$ADB" kill-server || true
-          "$ADB" start-server
-          "$EMULATOR" -avd professor_tv -port 5554 -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -memory 2048 -cores 2 > emulator-console.log 2>&1 &
-          EMULATOR_PID=$!
-          trap 'kill "$EMULATOR_PID" 2>/dev/null || true' EXIT
-
-          for i in $(seq 1 150); do
-            STATE=$("$ADB" -s emulator-5554 get-state 2>/dev/null || true)
-            BOOT=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-            if [ "$STATE" = "device" ] && [ "$BOOT" = "1" ]; then
-              break
+            adb logcat -c
+            set +e
+            INSTALL_OUTPUT=$(adb install --no-streaming -r "$APK" 2>&1)
+            INSTALL_RC=$?
+            set -e
+            printf '%s\n' "$INSTALL_OUTPUT" | tee install-result.txt
+            adb logcat -b all -d > package-manager-logcat.txt || true
+            if [ $INSTALL_RC -ne 0 ] || ! printf '%s\n' "$INSTALL_OUTPUT" | grep -q 'Success'; then
+              echo "APK install failed (rc=$INSTALL_RC)"
+              adb devices -l || true
+              grep -Ei "PackageManager|PackageInstaller|INSTALL_|parse|signature|permission|professor" package-manager-logcat.txt | tail -n 300 || true
+              exit 1
             fi
-            sleep 2
-          done
 
-          # Require several consecutive healthy ADB checks before touching PackageManager.
-          for i in 1 2 3 4 5; do
-            "$ADB" -s emulator-5554 wait-for-device
-            STATE=$("$ADB" -s emulator-5554 get-state | tr -d '\r')
-            BOOT=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')
-            echo "stability[$i]: state=$STATE boot=$BOOT"
-            test "$STATE" = "device"
-            test "$BOOT" = "1"
-            sleep 2
-          done
+            adb shell am force-stop "$PACKAGE"
+            adb logcat -c
+            START_OUTPUT=$(adb shell am start -W -n "$COMPONENT" 2>&1)
+            printf '%s\n' "$START_OUTPUT" | tee start-result.txt
+            sleep 5
 
-          "$ADB" -s emulator-5554 logcat -c
-          set +e
-          INSTALL_OUTPUT=$("$ADB" -s emulator-5554 install --no-streaming -r "$APK" 2>&1)
-          INSTALL_RC=$?
-          set -e
-          printf '%s\n' "$INSTALL_OUTPUT" | tee install-result.txt
-          "$ADB" -s emulator-5554 logcat -b all -d > package-manager-logcat.txt || true
-          if [ $INSTALL_RC -ne 0 ] || ! printf '%s\n' "$INSTALL_OUTPUT" | grep -q 'Success'; then
-            echo "APK install failed (rc=$INSTALL_RC)"
-            "$ADB" devices -l || true
-            grep -Ei "PackageManager|PackageInstaller|INSTALL_|parse|signature|permission|professor" package-manager-logcat.txt | tail -n 300 || true
-            tail -n 200 emulator-console.log || true
-            exit 1
-          fi
+            PID=$(adb shell pidof "$PACKAGE" | tr -d '\r' || true)
+            adb logcat -b all -d > emulator-logcat.txt || true
+            if [ -z "$PID" ]; then
+              echo "Professor Installer crashed or failed to launch"
+              grep -E "FATAL EXCEPTION|AndroidRuntime|$PACKAGE" emulator-logcat.txt | tail -n 300 || true
+              exit 1
+            fi
 
-          "$ADB" -s emulator-5554 shell am force-stop "$PACKAGE"
-          "$ADB" -s emulator-5554 logcat -c
-          START_OUTPUT=$("$ADB" -s emulator-5554 shell am start -W -n "$COMPONENT" 2>&1)
-          printf '%s\n' "$START_OUTPUT" | tee start-result.txt
-          sleep 5
+            adb shell uiautomator dump /sdcard/window.xml
+            adb pull /sdcard/window.xml window.xml
+            adb exec-out screencap -p > professor-tv-home.png
 
-          PID=$("$ADB" -s emulator-5554 shell pidof "$PACKAGE" | tr -d '\r' || true)
-          "$ADB" -s emulator-5554 logcat -b all -d > emulator-logcat.txt || true
-          if [ -z "$PID" ]; then
-            echo "Professor Installer crashed or failed to launch"
-            grep -E "FATAL EXCEPTION|AndroidRuntime|$PACKAGE" emulator-logcat.txt | tail -n 300 || true
-            exit 1
-          fi
+            grep -q "برمجة الأجهزة" window.xml
+            grep -q "تصفح التطبيقات" window.xml
+            grep -q "الدعم" window.xml
 
-          "$ADB" -s emulator-5554 shell uiautomator dump /sdcard/window.xml
-          "$ADB" -s emulator-5554 pull /sdcard/window.xml window.xml
-          "$ADB" -s emulator-5554 exec-out screencap -p > professor-tv-home.png
+            adb shell input keyevent KEYCODE_DPAD_RIGHT
+            adb shell input keyevent KEYCODE_DPAD_LEFT
+            sleep 1
+            adb logcat -b all -d > emulator-logcat-after-dpad.txt || true
+            if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat-after-dpad.txt; then
+              echo "Crash detected after D-pad smoke test"
+              exit 1
+            fi
 
-          grep -q "برمجة الأجهزة" window.xml
-          grep -q "تصفح التطبيقات" window.xml
-          grep -q "الدعم" window.xml
-
-          "$ADB" -s emulator-5554 shell input keyevent KEYCODE_DPAD_RIGHT
-          "$ADB" -s emulator-5554 shell input keyevent KEYCODE_DPAD_LEFT
-          sleep 1
-
-          "$ADB" -s emulator-5554 logcat -b all -d > emulator-logcat-after-dpad.txt || true
-          if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat-after-dpad.txt; then
-            echo "Crash detected after launch/D-pad test"
-            exit 1
-          fi
-
-          echo "ANDROID_TV_SMOKE_TEST=PASS"
+            echo "ANDROID_TV_SMOKE_TEST=PASS"
 
       - name: Upload tested APK
         if: success()
@@ -156,7 +127,6 @@ jobs:
             professor-tv-home.png
             emulator-logcat.txt
             emulator-logcat-after-dpad.txt
-            emulator-console.log
             window.xml
             install-result.txt
             start-result.txt
