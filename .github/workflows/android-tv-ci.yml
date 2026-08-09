@@ -30,10 +30,14 @@ jobs:
       - name: Build debug APK with Android Gradle Plugin
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Show available Android TV system images
+        run: |
+          sdkmanager --list | grep -E 'system-images;android-[0-9]+;android-tv;x86_64' | tail -n 20 || true
+
       - name: Run on Android TV Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           target: android-tv
           arch: x86_64
           profile: TV_1080p
