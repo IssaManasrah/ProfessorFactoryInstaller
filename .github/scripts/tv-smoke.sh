@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 APK="app/build/outputs/apk/debug/app-debug.apk"
-PACKAGE="com.shaikhalkar.professorinstaller.debug"
+PACKAGE="com.shaikhalkar.professorinstaller"
 COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.ProfessorMainActivity"
 
 adb wait-for-device
