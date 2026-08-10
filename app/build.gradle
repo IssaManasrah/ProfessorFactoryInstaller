@@ -7,11 +7,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.shaikhalkar.professorinstaller'
+        applicationId 'com.shaikhalkar.professorinstaller.autoclick'
         minSdk 26
         targetSdk 35
-        versionCode 103
-        versionName '3.1.0-auto-click'
+        versionCode 3101
+        versionName '3.1.0-auto-click-fresh'
     }
 
     buildTypes {
@@ -19,8 +19,7 @@ android {
             minifyEnabled false
         }
         debug {
-            // Keep the production package id so the Android TV tested APK follows
-            // the exact same package path used on real devices.
+            // Fresh validation package id so it can install beside older test builds.
         }
     }
 
