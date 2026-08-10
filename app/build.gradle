@@ -10,8 +10,8 @@ android {
         applicationId 'com.shaikhalkar.professorinstaller'
         minSdk 26
         targetSdk 35
-        versionCode 101
-        versionName '3.0.1-install-flow'
+        versionCode 102
+        versionName '3.0.2-session-fix'
     }
 
     buildTypes {
@@ -19,8 +19,8 @@ android {
             minifyEnabled false
         }
         debug {
-            applicationIdSuffix '.debug'
-            versionNameSuffix '-debug'
+            // Keep the production package id so the Android TV tested APK follows
+            // the exact same package path used on real devices.
         }
     }
 
