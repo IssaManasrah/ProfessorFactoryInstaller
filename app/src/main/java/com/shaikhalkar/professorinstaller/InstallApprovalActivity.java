@@ -9,13 +9,14 @@ import android.os.Bundle;
 /**
  * Foreground trampoline for PackageInstaller callbacks.
  *
- * Why this exists:
  * Some Android TV / Google TV builds block an installer confirmation Activity
  * when it is launched from a background BroadcastReceiver. Using an Activity
  * as the PackageInstaller status receiver keeps the user-action handoff in the
- * foreground and makes one-confirmation multi-package installs much more reliable.
+ * foreground. The current installer uses one PackageInstaller session per APK.
  */
 public class InstallApprovalActivity extends Activity {
+
+    private static final String ACTION_PREFIX = "INSTALL_STATUS_";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -40,6 +41,7 @@ public class InstallApprovalActivity extends Activity {
                 PackageInstaller.EXTRA_STATUS,
                 PackageInstaller.STATUS_FAILURE);
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+        int sessionId = sessionIdFromAction(intent.getAction());
 
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm;
@@ -51,6 +53,7 @@ public class InstallApprovalActivity extends Activity {
             }
 
             if (confirm == null) {
+                abandonQuietly(sessionId);
                 forwardResult(
                         PackageInstaller.STATUS_FAILURE,
                         "Android طلب موافقة المستخدم لكنه لم يرسل شاشة التثبيت");
@@ -61,6 +64,7 @@ public class InstallApprovalActivity extends Activity {
                 startActivity(confirm);
                 finish();
             } catch (Exception e) {
+                abandonQuietly(sessionId);
                 forwardResult(
                         PackageInstaller.STATUS_FAILURE,
                         "تعذر فتح شاشة تثبيت Android: "
@@ -69,7 +73,31 @@ public class InstallApprovalActivity extends Activity {
             return;
         }
 
+        if (status != PackageInstaller.STATUS_SUCCESS) {
+            // Defensive cleanup: some OEM PackageInstaller builds keep a failed
+            // session alive. Leaving it behind eventually causes
+            // "Too many active sessions for UID" after repeated retries.
+            abandonQuietly(sessionId);
+        }
+
         forwardResult(status, message == null ? "" : message);
+    }
+
+    private int sessionIdFromAction(String action) {
+        if (action == null || !action.startsWith(ACTION_PREFIX)) return -1;
+        try {
+            return Integer.parseInt(action.substring(ACTION_PREFIX.length()));
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
+    private void abandonQuietly(int sessionId) {
+        if (sessionId < 0) return;
+        try {
+            getPackageManager().getPackageInstaller().abandonSession(sessionId);
+        } catch (Exception ignored) {
+        }
     }
 
     private void forwardResult(int status, String message) {
