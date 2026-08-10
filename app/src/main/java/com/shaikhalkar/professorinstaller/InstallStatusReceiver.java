@@ -33,19 +33,26 @@ public class InstallStatusReceiver extends BroadcastReceiver {
                 confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             }
 
-            if (confirm != null) {
-                confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                if (!launchActivitySafely(context, confirm)) {
-                    launchResultUi(
-                            context,
-                            PackageInstaller.STATUS_FAILURE,
-                            "تعذر فتح شاشة تثبيت Android");
-                }
-            } else {
+            if (confirm == null) {
                 launchResultUi(
                         context,
                         PackageInstaller.STATUS_FAILURE,
                         "Android طلب موافقة المستخدم لكنه لم يرسل شاشة التثبيت");
+                return;
+            }
+
+            Intent bridge = new Intent(context, InstallBridgeActivity.class);
+            bridge.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            bridge.putExtra(InstallBridgeActivity.EXTRA_CONFIRM_INTENT, confirm);
+
+            if (!launchActivitySafely(context, bridge)) {
+                launchResultUi(
+                        context,
+                        PackageInstaller.STATUS_FAILURE,
+                        "تعذر فتح شاشة تثبيت Android");
             }
             return;
         }
@@ -54,7 +61,7 @@ public class InstallStatusReceiver extends BroadcastReceiver {
     }
 
     private static void launchResultUi(Context context, int status, String message) {
-        Intent ui = new Intent(context, MainActivity.class);
+        Intent ui = new Intent(context, ProfessorMainActivity.class);
         ui.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK
                         | Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -70,19 +77,12 @@ public class InstallStatusReceiver extends BroadcastReceiver {
         }
     }
 
-    /**
-     * Android 14+ restricts activity launches that originate from background callbacks.
-     * PackageInstaller delivers STATUS_PENDING_USER_ACTION through this BroadcastReceiver,
-     * so we explicitly grant background-activity-launch privileges to the PendingIntent.
-     */
     private static boolean launchActivitySafely(Context context, Intent target) {
         try {
             target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
             int flags = PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_CANCEL_CURRENT;
-            if (Build.VERSION.SDK_INT >= 23) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
+            if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
 
             android.os.Bundle creatorOptions = null;
             if (Build.VERSION.SDK_INT >= 34) {
