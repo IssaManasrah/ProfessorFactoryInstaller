@@ -1,5 +1,10 @@
-Validate current main with: hidden employee PIN, QUERY_ALL_PACKAGES, REQUEST_DELETE_PACKAGES, verified support uninstall, APK shared-user preflight, Android 10+ multi-package batch install, and Android 14+ PackageInstaller confirmation/return flow using explicit BAL-enabled PendingIntent activity launches.
+Validate current main on Android TV 12 / API 31.
 
-This validation run specifically checks the 3.0.1-install-flow build after fixing the case where Professor Installer reached “waiting for Android approval” but no Install screen appeared on Google TV.
-
-CI trigger: rerun Android TV smoke test with tv-smoke.sh invoked explicitly through bash after emulator boot.
+Current validation target:
+- clean Gradle build
+- install and launch on Android TV 12 emulator
+- D-pad smoke test
+- Professor programming flow prepares all offline-first APKs before installation
+- Android 12 PackageInstaller multi-package parent session for one batch approval when supported
+- browse/support remain sequential so support replace/delete ordering is preserved
+- no crash on launch or D-pad navigation
