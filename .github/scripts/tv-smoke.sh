@@ -2,8 +2,9 @@
 set -euxo pipefail
 
 APK="app/build/outputs/apk/debug/app-debug.apk"
-PACKAGE="com.shaikhalkar.professorinstaller"
+PACKAGE="com.shaikhalkar.professorinstaller.sharedfix"
 COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.ProfessorMainActivity"
+SERVICE_CLASS="com.shaikhalkar.professorinstaller.AutoInstallAccessibilityService"
 
 adb wait-for-device
 for i in 1 2 3 4 5; do
@@ -14,6 +15,15 @@ for i in 1 2 3 4 5; do
   test "$BOOT" = "1"
   sleep 2
 done
+
+# Regression guard: Professor Installer must not pre-reject android.uid.* APKs.
+if grep -q 'archive.sharedUserId.*startsWith("android.uid.")' app/src/main/java/com/shaikhalkar/professorinstaller/InstallCoordinator.java; then
+  echo "Legacy shared-user pre-rejection is still present"
+  exit 1
+fi
+
+grep -q 'Android PackageInstaller is the authoritative signature/firmware check' \
+  app/src/main/java/com/shaikhalkar/professorinstaller/InstallCoordinator.java
 
 adb logcat -c
 set +e
@@ -28,6 +38,9 @@ if [ $INSTALL_RC -ne 0 ] || ! printf '%s\n' "$INSTALL_OUTPUT" | grep -q 'Success
   grep -Ei "PackageManager|PackageInstaller|INSTALL_|parse|signature|permission|professor" package-manager-logcat.txt | tail -n 300 || true
   exit 1
 fi
+
+adb shell dumpsys package "$PACKAGE" > package-dump.txt
+grep -q "$SERVICE_CLASS" package-dump.txt
 
 adb shell am force-stop "$PACKAGE"
 adb logcat -c
@@ -60,7 +73,6 @@ if grep -E "FATAL EXCEPTION: main|Process: $PACKAGE.*FATAL" emulator-logcat-afte
   exit 1
 fi
 
-# Back from the home screen must leave the app instead of rebuilding home forever.
 adb shell input keyevent KEYCODE_BACK
 sleep 2
 if adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" | grep -q "$PACKAGE"; then
