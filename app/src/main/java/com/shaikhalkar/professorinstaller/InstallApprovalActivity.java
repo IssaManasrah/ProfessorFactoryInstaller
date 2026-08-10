@@ -23,6 +23,8 @@ public class InstallApprovalActivity extends Activity {
 
     private Intent pendingConfirmation;
     private int pendingSessionId = -1;
+    private boolean waitingForAccessibilitySettings;
+    private boolean firstResume = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,22 +40,32 @@ public class InstallApprovalActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+
+        // ACTION_ACCESSIBILITY_SETTINGS is not consistent about delivering an
+        // Activity result on Android TV vendor builds. onResume is therefore
+        // the source of truth after the user returns from Settings.
+        if (firstResume) {
+            firstResume = false;
+            return;
+        }
+
+        if (waitingForAccessibilitySettings && pendingConfirmation != null) {
+            waitingForAccessibilitySettings = false;
+            continueAfterAccessibilitySettings();
+        }
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_ACCESSIBILITY || pendingConfirmation == null) return;
 
-        Intent confirm = pendingConfirmation;
-        pendingConfirmation = null;
-        int sessionId = pendingSessionId;
-        pendingSessionId = -1;
-
-        if (AutoInstallAccessibilityService.isEnabled(this)) {
-            launchInstaller(confirm, true, sessionId);
-        } else {
-            // User returned without enabling Auto Click. Continue manually so
-            // programming never gets stuck.
-            launchInstaller(confirm, false, sessionId);
-        }
+        // onResume normally handles this. Keeping this fallback makes the flow
+        // work on devices that deliver the legacy callback before onResume.
+        waitingForAccessibilitySettings = false;
+        continueAfterAccessibilitySettings();
     }
 
     private void handle(Intent intent) {
@@ -112,31 +124,45 @@ public class InstallApprovalActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("Auto Click للتثبيت")
                 .setMessage(
-                        "لتثبيت التطبيقات بشكل شبه أوتوماتيكي، فعّل خدمة Professor Auto Install مرة واحدة من إمكانية الوصول. "
-                                + "بعدها سيضغط التطبيق زر Install / تثبيت تلقائيًا عند كل عملية برمجة.\n\n"
-                                + "إذا اخترت التثبيت اليدوي سيكمل Professor Installer بشكل طبيعي بدون Auto Click.")
+                        "فعّل Professor Auto Install مرة واحدة من إمكانية الوصول. "
+                                + "بعدها سيضغط التطبيق Install / تثبيت تلقائيًا ويكمل التطبيقات واحدًا وراء الثاني.\n\n"
+                                + "تقدر أيضًا تختار التثبيت اليدوي بدون تفعيل الخدمة.")
                 .setCancelable(false)
                 .setPositiveButton("تفعيل Auto Click", (d, w) -> {
+                    waitingForAccessibilitySettings = true;
                     try {
                         startActivityForResult(
                                 new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
                                 REQ_ACCESSIBILITY);
                     } catch (Exception e) {
-                        Intent manual = pendingConfirmation;
-                        pendingConfirmation = null;
-                        int id = pendingSessionId;
-                        pendingSessionId = -1;
-                        launchInstaller(manual, false, id);
+                        waitingForAccessibilitySettings = false;
+                        continueManually();
                     }
                 })
-                .setNegativeButton("تثبيت يدوي", (d, w) -> {
-                    Intent manual = pendingConfirmation;
-                    pendingConfirmation = null;
-                    int id = pendingSessionId;
-                    pendingSessionId = -1;
-                    launchInstaller(manual, false, id);
-                })
+                .setNegativeButton("تثبيت يدوي", (d, w) -> continueManually())
                 .show();
+    }
+
+    private void continueAfterAccessibilitySettings() {
+        Intent confirm = pendingConfirmation;
+        pendingConfirmation = null;
+        int sessionId = pendingSessionId;
+        pendingSessionId = -1;
+
+        if (confirm == null) return;
+        launchInstaller(
+                confirm,
+                AutoInstallAccessibilityService.isEnabled(this),
+                sessionId);
+    }
+
+    private void continueManually() {
+        waitingForAccessibilitySettings = false;
+        Intent manual = pendingConfirmation;
+        pendingConfirmation = null;
+        int sessionId = pendingSessionId;
+        pendingSessionId = -1;
+        launchInstaller(manual, false, sessionId);
     }
 
     private void launchInstaller(Intent confirm, boolean autoClick, int sessionId) {
