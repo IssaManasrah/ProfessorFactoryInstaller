@@ -1,4 +1,4 @@
-name: Android TV CI
+name: Android TV 12 CI
 
 on:
   push:
@@ -37,10 +37,10 @@ jobs:
       - name: Build debug APK with Android Gradle Plugin
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Android TV emulator smoke test
+      - name: Android TV 12 emulator smoke test
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 31
           target: android-tv
           arch: x86
           profile: tv_1080p
@@ -52,7 +52,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ProfessorInstaller-TV-tested-debug
+          name: ProfessorInstaller-AndroidTV12-tested-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -60,7 +60,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ProfessorInstaller-TV-smoke-evidence
+          name: ProfessorInstaller-AndroidTV12-smoke-evidence
           path: |
             professor-tv-home.png
             emulator-logcat.txt
