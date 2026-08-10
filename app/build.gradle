@@ -7,11 +7,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.shaikhalkar.professorinstaller'
+        applicationId 'com.shaikhalkar.professorinstaller.sharedfix'
         minSdk 26
         targetSdk 35
-        versionCode 104
-        versionName '3.1.1-shared-user-fix'
+        versionCode 3111
+        versionName '3.1.1-shared-user-fix-test'
     }
 
     buildTypes {
@@ -19,8 +19,7 @@ android {
             minifyEnabled false
         }
         debug {
-            // Keep the production package id so the Android TV tested APK follows
-            // the exact same package path used on real devices.
+            // Side-by-side validation package so the working build stays installed.
         }
     }
 
