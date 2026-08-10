@@ -535,10 +535,9 @@ final class InstallCoordinator {
                         + " بينما الـAPI يتوقع " + app.packageName + ".";
             }
 
-            if (archive.sharedUserId != null && archive.sharedUserId.startsWith("android.uid.")) {
-                return "هذا APK نسخة نظامية تستخدم shared user: " + archive.sharedUserId
-                        + ". تحتاج توقيع منصة المصنع المطابق لنفس Firmware.";
-            }
+            // Do not reject android.uid.* shared-user APKs here. Some Professor
+            // device firmwares legitimately accept their own platform-signed APKs.
+            // Android PackageInstaller is the authoritative signature/firmware check.
             return null;
         } catch (Exception e) {
             return "تعذر فحص توافق APK: "
@@ -552,7 +551,7 @@ final class InstallCoordinator {
             return "وجد Android جلسات تثبيت قديمة معلقة. اضغط إعادة المحاولة وسيتم تنظيفها.";
         }
         if (text.contains("INSTALL_FAILED_SHARED_USER_INCOMPATIBLE")) {
-            return "الـAPK نسخة System وتوقيعها لا يطابق توقيع Firmware.";
+            return "Android رفض APK لأن توقيع shared user لا يطابق Firmware على هذا الجهاز.";
         }
         if (text.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") || text.contains("signatures do not match")) {
             return "يوجد إصدار مثبت بنفس Package لكن بتوقيع مختلف. احذفه أولًا أو استخدم APK بنفس التوقيع.";
