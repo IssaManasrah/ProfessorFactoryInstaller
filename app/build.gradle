@@ -10,8 +10,8 @@ android {
         applicationId 'com.shaikhalkar.professorinstaller'
         minSdk 26
         targetSdk 35
-        versionCode 102
-        versionName '3.0.2-session-fix'
+        versionCode 103
+        versionName '3.1.0-auto-click'
     }
 
     buildTypes {
