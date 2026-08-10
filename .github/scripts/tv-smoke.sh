@@ -2,8 +2,9 @@
 set -euxo pipefail
 
 APK="app/build/outputs/apk/debug/app-debug.apk"
-PACKAGE="com.shaikhalkar.professorinstaller"
+PACKAGE="com.shaikhalkar.professorinstaller.autoclick"
 COMPONENT="$PACKAGE/com.shaikhalkar.professorinstaller.ProfessorMainActivity"
+SERVICE_CLASS="com.shaikhalkar.professorinstaller.AutoInstallAccessibilityService"
 
 adb wait-for-device
 for i in 1 2 3 4 5; do
@@ -28,6 +29,10 @@ if [ $INSTALL_RC -ne 0 ] || ! printf '%s\n' "$INSTALL_OUTPUT" | grep -q 'Success
   grep -Ei "PackageManager|PackageInstaller|INSTALL_|parse|signature|permission|professor" package-manager-logcat.txt | tail -n 300 || true
   exit 1
 fi
+
+# Confirm Android registered the AccessibilityService from the APK manifest.
+adb shell dumpsys package "$PACKAGE" > package-dump.txt
+grep -q "$SERVICE_CLASS" package-dump.txt
 
 adb shell am force-stop "$PACKAGE"
 adb logcat -c
