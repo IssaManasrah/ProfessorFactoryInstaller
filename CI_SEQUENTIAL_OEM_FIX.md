@@ -1,0 +1,1 @@
+Validate OEM-compatible sequential PackageInstaller flow after removing multi-package sessions. Real-device symptom addressed: Android TV reported that it could not create the install group. Each APK now uses its own PackageInstaller session and advances only after STATUS_SUCCESS.
