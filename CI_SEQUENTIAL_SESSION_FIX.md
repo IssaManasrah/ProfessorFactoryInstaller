@@ -1,0 +1,1 @@
+Validate the sequential semi-automatic PackageInstaller flow that removes multi-package sessions, cleans stale installer sessions, installs one APK per session, and automatically continues after Android install approval.
