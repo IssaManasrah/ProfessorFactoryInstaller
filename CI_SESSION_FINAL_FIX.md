@@ -1,0 +1,1 @@
+Validate final sequential installer session cleanup: no multi-package sessions, stale-session cleanup before programming, failed-session abandonment before retry, Android TV launch and D-pad smoke test.
