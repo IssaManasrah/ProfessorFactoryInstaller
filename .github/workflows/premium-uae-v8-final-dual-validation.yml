@@ -1,0 +1,150 @@
+name: Premium UAE V8 Final Dual Validation
+
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v8-final-dual-validation.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ARTIFACT_ID: '9253511622'
+
+jobs:
+  google-tv-dpad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact V8 and build test wrapper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v8.zip "https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/$ARTIFACT_ID/zip"
+          unzip -q lab/v8.zip -d lab/src
+          cp lab/src/Premium_UAE_V8.apk lab/out/Premium_UAE_V8.apk
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/out/Premium_UAE_V8.apk -o lab/decoded
+          cat > lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity.smali <<'SMALI'
+          .class public Lcom/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity;
+          .super Landroid/app/Activity;
+          .source "ResumeDialogTestActivity.java"
+          .method public constructor <init>()V
+              .locals 0
+              invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+              return-void
+          .end method
+          .method protected onCreate(Landroid/os/Bundle;)V
+              .locals 0
+              invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+              invoke-static {p0}, Lcom/mbm_soft/aldahyaplay/utils/ResumePrompt;->showTest(Landroid/app/Activity;)V
+              return-void
+          .end method
+          SMALI
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lab/decoded/AndroidManifest.xml')
+          s=p.read_text()
+          s=s.replace('</application>','<activity android:name="com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity" android:exported="true" />\n</application>',1)
+          p.write_text(s)
+          PY
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/test_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/test.keystore -storepass android -keypass android -alias tvtest -dname 'CN=V8 TV Test,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/test_unsigned.apk lab/out/test_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/test.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias tvtest --out lab/out/V8_TVTEST.apk lab/out/test_aligned.apk
+      - name: Google TV API 30 DPAD verification
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google-tv
+          arch: x86_64
+          disable-animations: true
+          script: |
+            set -eu
+            adb wait-for-device
+            sleep 15
+            adb install --no-incremental -r lab/out/V8_TVTEST.apk
+            adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+            sleep 3
+            adb shell uiautomator dump /sdcard/initial.xml >/dev/null
+            adb pull /sdcard/initial.xml lab/out/initial.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/initial.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('INITIAL_CONTINUE_FOCUSED')" | tee lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-initial.png
+            adb shell input keyevent KEYCODE_DPAD_RIGHT
+            sleep 1
+            adb shell uiautomator dump /sdcard/right.xml >/dev/null
+            adb pull /sdcard/right.xml lab/out/right.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/right.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='من البداية']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('RIGHT_RESTART_FOCUSED')" | tee -a lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-right.png
+            adb shell input keyevent KEYCODE_DPAD_LEFT
+            sleep 1
+            adb shell uiautomator dump /sdcard/left.xml >/dev/null
+            adb pull /sdcard/left.xml lab/out/left.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/left.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('LEFT_CONTINUE_FOCUSED')" | tee -a lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-left.png
+            adb shell input keyevent KEYCODE_DPAD_CENTER
+            sleep 1
+            echo CENTER_CLICK_SENT | tee -a lab/out/dpad.txt
+            adb shell getprop ro.build.characteristics > lab/out/tv-characteristics.txt
+            adb shell getprop ro.build.version.release > lab/out/tv-release.txt
+            echo GOOGLE_TV_DPAD_OK > lab/out/tv-result.txt
+      - name: Upload TV evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V8-Google-TV-DPAD-Evidence
+          path: lab/out/
+          retention-days: 7
+
+  android12-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact final V8
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v8.zip "https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/$ARTIFACT_ID/zip"
+          unzip -q lab/v8.zip -d lab/src
+          cp lab/src/Premium_UAE_V8.apk lab/out/Premium_UAE_V8.apk
+      - name: Android 12 final APK smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -eu
+            adb wait-for-device
+            sleep 20
+            adb shell service check package | grep -qi found
+            adb install --no-incremental -r lab/out/Premium_UAE_V8.apk
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 12
+            adb shell pidof com.mbm_soft.aldahyaplay > lab/out/pid.txt || true
+            test -s lab/out/pid.txt
+            adb logcat -d > lab/out/logcat.txt
+            grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/logcat.txt > lab/out/fatal.txt || true
+            test ! -s lab/out/fatal.txt
+            adb shell getprop ro.build.version.release > lab/out/android-release.txt
+            echo ANDROID12_FINAL_APK_SMOKE_OK > lab/out/android12-result.txt
+      - name: Upload Android 12 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V8-Android12-Evidence
+          path: lab/out/
+          retention-days: 7
