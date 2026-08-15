@@ -1,0 +1,186 @@
+name: Premium UAE V8
+
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths:
+      - '.github/workflows/premium-uae-v8.yml'
+      - 'premium-uae-lab/v8/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download UAE APK and apktool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          sha256sum lab/premium-UAE.apk lab/tools/apktool.jar | tee lab/out/SHA256SUMS.txt
+
+      - name: Decode UAE APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar d -f lab/premium-UAE.apk -o lab/decoded-uae
+
+      - name: Apply V4 through V8 patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 premium-uae-lab/patch_uae.py lab/decoded-uae | tee lab/out/patch-result.txt
+          python3 premium-uae-lab/fix_ranges.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          cat premium-uae-lab/vnext_parts/part00 premium-uae-lab/vnext_parts/part01 premium-uae-lab/vnext_parts/part02 premium-uae-lab/vnext_parts/part03 premium-uae-lab/vnext_parts/part04a premium-uae-lab/vnext_parts/part04b0 premium-uae-lab/vnext_parts/part04b1 premium-uae-lab/vnext_parts/part04b2 premium-uae-lab/vnext_parts/part05 > lab/patch_vnext.py.gz.b64
+          base64 -d lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          python3 lab/patch_vnext.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v5/patch_v5.py.gz.b64 | gzip -d > lab/patch_v5.py
+          python3 lab/patch_v5.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v6/patch_v6.py.gz.b64 | gzip -d > lab/patch_v6.py
+          python3 lab/patch_v6.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v7/patch_v7.py.gz.b64 | gzip -d > lab/patch_v7.py
+          python3 lab/patch_v7.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v8/patch_v8.py.gz.b64 | gzip -d > lab/patch_v8.py
+          python3 -m py_compile lab/patch_v8.py
+          python3 lab/patch_v8.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          grep -q 'V8_PATCH_OK' lab/out/patch-result.txt
+
+      - name: Verify V8 logic and search scenarios
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP=lab/decoded-uae/smali/com/mbm_soft/aldahyaplay
+          grep -R 'SearchFilter;->movies\|SearchFilter;->series' "$APP/ui/movies/d.smali" "$APP/ui/series/d.smali" | tee lab/out/search-filter-wiring.txt
+          grep -R 'last_movie_\|last_series_\|MovieRecentComparator\|SeriesRecentComparator\|Collections;->sort' "$APP/utils" | tee lab/out/mylist-recency-check.txt
+          grep -R 'setNextFocusLeftId\|setNextFocusRightId\|setNextFocusUpId\|setNextFocusDownId\|StateListDrawable\|setMargins' "$APP/utils/ResumePrompt.smali" | tee lab/out/resume-tv-focus-check.txt
+          python3 -c "q=lambda t:t.rsplit('#',1)[0].strip().lower(); f=lambda xs,t:[x for x in xs if q(t) in x.lower()]; tests=[('ab#1',['AB One','ZZ','abc'],['AB One','abc']),('abc#2',['ABC Show','AB Show','xabcx'],['ABC Show','xabcx']),('abc#3',['ABC Show','noise'],['ABC Show']),('abcd#4',['ABCD','ABC','xABCDx'],['ABCD','xABCDx'])]; assert all(f(xs,t)==exp for t,xs,exp in tests); print('PASS 2-char, 3-char, repeated-3-char, 4-char exact filtering')" | tee lab/out/search-scenarios.txt
+
+      - name: Rebuild final V8 APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/Premium_UAE_V8_unsigned.apk
+          unzip -t lab/out/Premium_UAE_V8_unsigned.apk | tee lab/out/rebuild-zip-test.txt
+
+      - name: Sign final V8 APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/lab.keystore -storepass android -keypass android -alias premiumuae -dname 'CN=Premium UAE V8,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_V8_unsigned.apk lab/out/Premium_UAE_V8_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/lab.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias premiumuae --out lab/out/Premium_UAE_V8.apk lab/out/Premium_UAE_V8_aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs lab/out/Premium_UAE_V8.apk | tee lab/out/apksigner-verify.txt
+
+      - name: Build TV dialog test APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity.smali <<'SMALI'
+          .class public Lcom/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity;
+          .super Landroid/app/Activity;
+          .source "ResumeDialogTestActivity.java"
+
+          .method public constructor <init>()V
+              .locals 0
+              invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+              return-void
+          .end method
+
+          .method protected onCreate(Landroid/os/Bundle;)V
+              .locals 0
+              invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+              invoke-static {p0}, Lcom/mbm_soft/aldahyaplay/utils/ResumePrompt;->showTest(Landroid/app/Activity;)V
+              return-void
+          .end method
+          SMALI
+          python3 -c "from pathlib import Path; p=Path('lab/decoded-uae/AndroidManifest.xml'); s=p.read_text(); assert '</application>' in s; s=s.replace('</application>','<activity android:name=\"com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity\" android:exported=\"true\" />\n</application>',1); p.write_text(s)"
+          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/Premium_UAE_V8_TVTEST_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_V8_TVTEST_unsigned.apk lab/out/Premium_UAE_V8_TVTEST_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/lab.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias premiumuae --out lab/out/Premium_UAE_V8_TVTEST.apk lab/out/Premium_UAE_V8_TVTEST_aligned.apk
+
+      - name: Android 12 Google TV DPAD and final smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: google-tv
+          arch: x86_64
+          disable-animations: true
+          script: |
+            set -eu
+            adb wait-for-device
+            sleep 15
+            adb shell service check package | grep -qi 'found'
+            adb install --no-incremental -r lab/out/Premium_UAE_V8_TVTEST.apk
+            adb logcat -c
+            adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+            sleep 3
+            adb shell uiautomator dump /sdcard/v8-initial.xml >/dev/null
+            adb pull /sdcard/v8-initial.xml lab/out/v8-initial.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/v8-initial.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('INITIAL_FOCUS_CONTINUE_OK')" | tee lab/out/dpad-test.txt
+            adb exec-out screencap -p > lab/out/resume-dialog-initial.png
+            adb shell input keyevent 22
+            sleep 1
+            adb shell uiautomator dump /sdcard/v8-right.xml >/dev/null
+            adb pull /sdcard/v8-right.xml lab/out/v8-right.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/v8-right.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='من البداية']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('DPAD_RIGHT_RESTART_OK')" | tee -a lab/out/dpad-test.txt
+            adb exec-out screencap -p > lab/out/resume-dialog-right.png
+            adb shell input keyevent 21
+            sleep 1
+            adb shell uiautomator dump /sdcard/v8-left.xml >/dev/null
+            adb pull /sdcard/v8-left.xml lab/out/v8-left.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/v8-left.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('DPAD_LEFT_CONTINUE_OK')" | tee -a lab/out/dpad-test.txt
+            adb exec-out screencap -p > lab/out/resume-dialog-left.png
+            adb install --no-incremental -r lab/out/Premium_UAE_V8.apk
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 12
+            adb shell pidof com.mbm_soft.aldahyaplay > lab/out/emulator-pid.txt || true
+            test -s lab/out/emulator-pid.txt
+            adb logcat -d > lab/out/emulator-logcat.txt
+            grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/emulator-logcat.txt > lab/out/fatal-check.txt || true
+            test ! -s lab/out/fatal-check.txt
+            echo 'ANDROID12_GOOGLE_TV_DPAD_AND_SMOKE_OK' > lab/out/emulator-result.txt
+
+      - name: Upload V8 APK and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Enhanced-V8
+          path: |
+            lab/out/Premium_UAE_V8.apk
+            lab/out/patch-result.txt
+            lab/out/search-scenarios.txt
+            lab/out/search-filter-wiring.txt
+            lab/out/mylist-recency-check.txt
+            lab/out/resume-tv-focus-check.txt
+            lab/out/dpad-test.txt
+            lab/out/resume-dialog-initial.png
+            lab/out/resume-dialog-right.png
+            lab/out/resume-dialog-left.png
+            lab/out/emulator-result.txt
+            lab/out/emulator-pid.txt
+            lab/out/emulator-logcat.txt
+            lab/out/fatal-check.txt
+            lab/out/apksigner-verify.txt
+            lab/out/rebuild-zip-test.txt
+            lab/out/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 7
