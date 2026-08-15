@@ -1,0 +1,76 @@
+name: Probe Hanew activation HTTP
+
+on:
+  push:
+    branches: [ diag/haha-reference-public ]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build exact Hydra request body
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from urllib.parse import quote_from_bytes
+          import json
+          obj={"mode":"active","gyoup":"0","code":"777815041991","mac":"4a:72:ab:e5:ce:b0","sn":"4a:72:ab:e5:ce:b0","serial":"4a:72:ab:e5:ce:b0"}
+          plain=json.dumps(obj,separators=(',',':')).encode()
+          key=b'ZR.36vumwk&5Sz5K.1'
+          raw=bytes(b ^ key[i%len(key)] for i,b in enumerate(plain))
+          # java URLEncoder on ISO-8859-1 is application/x-www-form-urlencoded compatible.
+          body='json='+quote_from_bytes(raw,safe='*-._')
+          open('body.txt','wb').write(body.encode('ascii'))
+          print('plain=',plain.decode())
+          print('body_len=',len(body))
+          PY
+      - name: Probe HTTP without redirect
+        shell: bash
+        run: |
+          set +e
+          curl -sS -D http-headers.txt -o http-body.bin --max-time 20 --max-redirs 0 \
+            -H 'Content-Type: application/x-www-form-urlencoded' --data-binary @body.txt \
+            'http://and.hah3lx.cyou/APK/Hanew.php'
+          echo $? > http-curl-exit.txt
+          wc -c http-body.bin || true
+          cat http-headers.txt || true
+          xxd -g1 -l 512 http-body.bin || true
+      - name: Probe HTTP following redirects
+        shell: bash
+        run: |
+          set +e
+          curl -sS -L -D follow-headers.txt -o follow-body.bin --max-time 25 \
+            -H 'Content-Type: application/x-www-form-urlencoded' --data-binary @body.txt \
+            'http://and.hah3lx.cyou/APK/Hanew.php'
+          echo $? > follow-curl-exit.txt
+          wc -c follow-body.bin || true
+          cat follow-headers.txt || true
+          xxd -g1 -l 1024 follow-body.bin || true
+      - name: Probe HTTPS directly
+        shell: bash
+        run: |
+          set +e
+          curl -sS -D https-headers.txt -o https-body.bin --max-time 20 \
+            -H 'Content-Type: application/x-www-form-urlencoded' --data-binary @body.txt \
+            'https://and.hah3lx.cyou/APK/Hanew.php'
+          echo $? > https-curl-exit.txt
+          wc -c https-body.bin || true
+          cat https-headers.txt || true
+          xxd -g1 -l 512 https-body.bin || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Hanew-HTTP-probe
+          path: |
+            body.txt
+            http-headers.txt
+            http-body.bin
+            http-curl-exit.txt
+            follow-headers.txt
+            follow-body.bin
+            follow-curl-exit.txt
+            https-headers.txt
+            https-body.bin
+            https-curl-exit.txt
+          if-no-files-found: ignore
