@@ -1,0 +1,142 @@
+name: Premium UAE V6
+
+on:
+  push:
+    branches: [premium-uae-lab]
+    paths:
+      - '.github/workflows/premium-uae-v6.yml'
+      - 'premium-uae-lab/v6/**'
+      - 'premium-uae-lab/v5/**'
+      - 'premium-uae-lab/patch_uae.py'
+      - 'premium-uae-lab/fix_ranges.py'
+      - 'premium-uae-lab/vnext_parts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download UAE APK and apktool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          sha256sum lab/premium-UAE.apk lab/tools/apktool.jar | tee lab/out/SHA256SUMS.txt
+
+      - name: Decode UAE APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar d -f lab/premium-UAE.apk -o lab/decoded-uae
+
+      - name: Apply V4 VNext V5 and V6 patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 premium-uae-lab/patch_uae.py lab/decoded-uae | tee lab/out/patch-result.txt
+          python3 premium-uae-lab/fix_ranges.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          cat premium-uae-lab/vnext_parts/part00 premium-uae-lab/vnext_parts/part01 premium-uae-lab/vnext_parts/part02 premium-uae-lab/vnext_parts/part03 premium-uae-lab/vnext_parts/part04a premium-uae-lab/vnext_parts/part04b0 premium-uae-lab/vnext_parts/part04b1 premium-uae-lab/vnext_parts/part04b2 premium-uae-lab/vnext_parts/part05 > lab/patch_vnext.py.gz.b64
+          base64 -d lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          python3 -m py_compile lab/patch_vnext.py
+          python3 lab/patch_vnext.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v5/patch_v5.py.gz.b64 | gzip -d > lab/patch_v5.py
+          python3 -m py_compile lab/patch_v5.py
+          python3 lab/patch_v5.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          base64 -d premium-uae-lab/v6/patch_v6.py.gz.b64 | gzip -d > lab/patch_v6.py
+          python3 -m py_compile lab/patch_v6.py
+          python3 lab/patch_v6.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          grep -q 'V6_PATCH_OK' lab/out/patch-result.txt
+
+      - name: Verify V6 changes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ! grep -q 'postDelayed(Ljava/lang/Runnable;J)Z' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali
+          ! grep -q 'postDelayed(Ljava/lang/Runnable;J)Z' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali
+          grep -R 'searchToken:Ljava/lang/String;' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali | tee lab/out/search-instant-check.txt
+          grep -A80 '.method public static filterSeries' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali | grep 'Lz6/j;->b()Ljava/lang/String;' | tee lab/out/mylist-series-id-check.txt
+          grep -R 'filterMovies\|filterSeries' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity.smali lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity.smali | tee lab/out/mylist-observer-check.txt
+          grep -R 'استكمال المشاهدة\|هل تريد المتابعة من مكان التوقف؟\|"متابعة"\|"من البداية"' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali | tee lab/out/resume-ui-check.txt
+          ! grep -q '🎬\|▶  متابعة\|↻  ابدأ' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali
+          grep -R 'Ly6/c;->w0(Ljava/lang/Boolean;)V' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/intro/IntroActivity.smali | tee lab/out/active-code-check.txt
+
+      - name: Rebuild patched UAE APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/Premium_UAE_V6_unsigned.apk
+          unzip -t lab/out/Premium_UAE_V6_unsigned.apk | tee lab/out/rebuild-zip-test.txt
+
+      - name: Sign and verify APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/lab.keystore -storepass android -keypass android -alias premiumuae -dname 'CN=Premium UAE V6,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_V6_unsigned.apk lab/out/Premium_UAE_V6_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/lab.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias premiumuae --out lab/out/Premium_UAE_V6.apk lab/out/Premium_UAE_V6_aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs lab/out/Premium_UAE_V6.apk | tee lab/out/apksigner-verify.txt
+
+      - name: Android 11 emulator smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -eu
+            adb wait-for-device
+            sleep 20
+            adb shell service check package | grep -qi 'found'
+            adb shell pm list packages >/dev/null
+            sleep 5
+            adb install --no-incremental -r lab/out/Premium_UAE_V6.apk
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 12
+            adb shell pidof com.mbm_soft.aldahyaplay > lab/out/emulator-pid.txt || true
+            test -s lab/out/emulator-pid.txt
+            adb logcat -d > lab/out/emulator-logcat.txt
+            grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/emulator-logcat.txt > lab/out/fatal-check.txt || true
+            test ! -s lab/out/fatal-check.txt
+            echo 'EMULATOR_SMOKE_OK' > lab/out/emulator-result.txt
+
+      - name: Upload V6 APK and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Enhanced-V6
+          path: |
+            lab/out/Premium_UAE_V6.apk
+            lab/out/patch-result.txt
+            lab/out/apksigner-verify.txt
+            lab/out/emulator-result.txt
+            lab/out/emulator-pid.txt
+            lab/out/emulator-logcat.txt
+            lab/out/fatal-check.txt
+            lab/out/search-instant-check.txt
+            lab/out/mylist-series-id-check.txt
+            lab/out/mylist-observer-check.txt
+            lab/out/resume-ui-check.txt
+            lab/out/active-code-check.txt
+            lab/out/rebuild-zip-test.txt
+            lab/out/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 7
