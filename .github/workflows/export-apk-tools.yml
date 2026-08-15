@@ -1,0 +1,28 @@
+name: Export APK Tools
+on:
+  push:
+    branches: [ fix/haha-agent-logo-emulator ]
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Collect build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          mkdir -p out/lib
+          cp "$BT/zipalign" out/
+          cp "$BT/apksigner" out/
+          cp "$BT/lib/apksigner.jar" out/lib/
+          chmod +x out/zipalign out/apksigner
+          java -version
+          "$BT/apksigner" version
+          "$BT/zipalign" -h >/dev/null 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-tools
+          path: out/
+          if-no-files-found: error
