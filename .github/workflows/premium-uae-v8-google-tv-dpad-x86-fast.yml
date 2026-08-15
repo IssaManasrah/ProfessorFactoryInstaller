@@ -1,0 +1,122 @@
+name: Premium UAE V8 Google TV DPAD x86 Fast
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v8-google-tv-dpad-x86-fast.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  dpad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare strict x86-only dialog wrapper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v8.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9253511622/zip'
+          unzip -q lab/v8.zip -d lab/src
+          cp lab/src/Premium_UAE_V8.apk lab/out/Premium_UAE_V8.apk
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/out/Premium_UAE_V8.apk -o lab/decoded
+          rm -rf lab/decoded/lib/arm64-v8a lab/decoded/lib/armeabi-v7a lab/decoded/lib/x86_64
+          cat > lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity.smali <<'SMALI'
+          .class public Lcom/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity;
+          .super Landroid/app/Activity;
+          .method public constructor <init>()V
+              .locals 0
+              invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+              return-void
+          .end method
+          .method protected onCreate(Landroid/os/Bundle;)V
+              .locals 0
+              invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+              invoke-static {p0}, Lcom/mbm_soft/aldahyaplay/utils/ResumePrompt;->showTest(Landroid/app/Activity;)V
+              return-void
+          .end method
+          SMALI
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lab/decoded/AndroidManifest.xml'); s=p.read_text(); s=s.replace('</application>','<activity android:name="com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity" android:exported="true" />\n</application>',1); p.write_text(s)
+          PY
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/test_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/test.keystore -storepass android -keypass android -alias test -dname 'CN=V8 Google TV DPAD,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/test_unsigned.apk lab/out/test_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/test.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias test --out lab/out/test.apk lab/out/test_aligned.apk
+          ls -lh lab/out/test.apk | tee lab/out/test-size.txt
+          cat > lab/out/check_focus.py <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root=ET.parse(sys.argv[1]).getroot(); text=sys.argv[2]
+          nodes=[n for n in root.iter('node') if n.attrib.get('text')==text]
+          if not nodes: raise SystemExit('MISSING:'+text)
+          n=nodes[0]
+          print(text,n.attrib.get('focused'),n.attrib.get('focusable'),n.attrib.get('bounds'),n.attrib.get('package'))
+          if n.attrib.get('focused')!='true': raise SystemExit('NOT_FOCUSED:'+text)
+          PY
+          cat > lab/out/run.sh <<'BASH'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          adb wait-for-device
+          sleep 15
+          adb shell service check package | grep -qi found
+          adb shell pm list packages >/dev/null
+          adb push lab/out/test.apk /data/local/tmp/v8test.apk
+          adb shell pm install -r /data/local/tmp/v8test.apk
+          adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+          sleep 3
+          # If emulator itself shows an ANR overlay, select Wait and retry opening test Activity.
+          adb shell uiautomator dump /sdcard/pre.xml >/dev/null 2>&1 || true
+          adb pull /sdcard/pre.xml lab/out/pre.xml >/dev/null 2>&1 || true
+          if [[ -s lab/out/pre.xml ]] && grep -q "isn't responding" lab/out/pre.xml; then
+            adb shell input keyevent KEYCODE_DPAD_DOWN || true
+            adb shell input keyevent KEYCODE_DPAD_CENTER || true
+            sleep 3
+            adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+            sleep 2
+          fi
+          adb shell uiautomator dump /sdcard/a.xml >/dev/null
+          adb pull /sdcard/a.xml lab/out/a.xml >/dev/null
+          grep -q 'متابعة' lab/out/a.xml
+          python3 lab/out/check_focus.py lab/out/a.xml 'متابعة' > lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/initial.png
+          adb shell input keyevent KEYCODE_DPAD_RIGHT
+          sleep 1
+          adb shell uiautomator dump /sdcard/b.xml >/dev/null
+          adb pull /sdcard/b.xml lab/out/b.xml >/dev/null
+          python3 lab/out/check_focus.py lab/out/b.xml 'من البداية' >> lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/right.png
+          adb shell input keyevent KEYCODE_DPAD_LEFT
+          sleep 1
+          adb shell uiautomator dump /sdcard/c.xml >/dev/null
+          adb pull /sdcard/c.xml lab/out/c.xml >/dev/null
+          python3 lab/out/check_focus.py lab/out/c.xml 'متابعة' >> lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/left.png
+          adb shell input keyevent KEYCODE_DPAD_CENTER
+          sleep 1
+          echo CENTER_OK >> lab/out/dpad.txt
+          echo GOOGLE_TV_X86_FAST_STRICT_OK > lab/out/result.txt
+          BASH
+          chmod +x lab/out/run.sh
+      - name: Google TV strict DPAD x86-only
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google-tv
+          arch: x86
+          cores: 4
+          ram-size: 2048M
+          disable-animations: true
+          script: bash lab/out/run.sh
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V8-Google-TV-DPAD-x86-Fast-Evidence
+          path: lab/out/
+          retention-days: 7
