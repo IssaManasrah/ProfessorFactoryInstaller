@@ -1,0 +1,45 @@
+name: Prove Xtream backend separately
+
+on:
+  push:
+    branches: [ diag/haha-reference-public ]
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Call Xtream player API
+        shell: bash
+        run: |
+          set +e
+          curl -sS --max-time 20 -D xtream-headers.txt \
+            'http://and.hah3lx.cyou:8080/player_api.php?username=H278518664&password=2636802666' \
+            -o xtream-body.json
+          echo $? > xtream-exit.txt
+          cat xtream-headers.txt
+          python3 - <<'PY'
+          import json
+          p='xtream-body.json'
+          try:
+              d=json.load(open(p))
+              safe={}
+              ui=d.get('user_info') or {}
+              si=d.get('server_info') or {}
+              safe['user_info']={k:ui.get(k) for k in ('auth','status','exp_date','active_cons','max_connections') if k in ui}
+              safe['server_info']={k:si.get(k) for k in ('url','port','https_port','server_protocol') if k in si}
+              open('xtream-safe-summary.json','w').write(json.dumps(safe,indent=2))
+              print(json.dumps(safe,indent=2))
+          except Exception as e:
+              print('parse_error',repr(e))
+              print(open(p,'rb').read(500))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Xtream-backend-proof
+          path: |
+            xtream-headers.txt
+            xtream-safe-summary.json
+            xtream-exit.txt
+          if-no-files-found: ignore
