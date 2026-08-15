@@ -89,7 +89,28 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            adb install -r lab/out/Premium_UAE_V5.apk
+            adb wait-for-device
+            package_ready=0
+            for i in $(seq 1 90); do
+              if adb shell service check package 2>/dev/null | grep -qi 'found'; then
+                package_ready=1
+                break
+              fi
+              sleep 2
+            done
+            test "$package_ready" -eq 1
+            adb shell pm list packages >/dev/null
+            sleep 10
+            if ! adb install --no-incremental -r lab/out/Premium_UAE_V5.apk; then
+              adb wait-for-device
+              for i in $(seq 1 45); do
+                adb shell service check package 2>/dev/null | grep -qi 'found' && break
+                sleep 2
+              done
+              adb shell pm list packages >/dev/null
+              sleep 10
+              adb install --no-incremental -r lab/out/Premium_UAE_V5.apk
+            fi
             adb logcat -c
             adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
             sleep 12
