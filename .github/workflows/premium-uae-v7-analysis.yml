@@ -64,12 +64,7 @@ jobs:
             "$APP/ui/series_info" \
             "$APP/ui/vod_exo" \
             "$APP/ui/vod_vlc" \
-            "$APP/utils/ResumeStore.smali" \
-            "$APP/utils/ResumePrompt.smali" \
-            "$APP/utils/ResumePrompt$ExoContinue.smali" \
-            "$APP/utils/ResumePrompt$ExoRestart.smali" \
-            "$APP/utils/ResumePrompt$VlcContinue.smali" \
-            "$APP/utils/ResumePrompt$VlcRestart.smali" \
+            "$APP/utils" \
             "$APP/adapter/MovieAdapter.smali" \
             "$APP/adapter/SeriesAdapter.smali" \
             "$APP/adapter/EpisodeAdapter.smali" \
