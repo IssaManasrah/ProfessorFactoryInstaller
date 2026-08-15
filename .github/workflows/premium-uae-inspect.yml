@@ -1,0 +1,47 @@
+name: Premium UAE Inspect
+
+on:
+  push:
+    branches: [premium-uae-lab]
+    paths:
+      - '.github/workflows/premium-uae-inspect.yml'
+      - 'premium-uae-lab/inspect_vnext.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download tools and UAE APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          curl -fL --retry 3 -o lab/tools/jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip'
+          unzip -q lab/tools/jadx.zip -d lab/tools/jadx
+          chmod +x lab/tools/jadx/bin/jadx
+      - name: Decode and inspect
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar d -f lab/premium-UAE.apk -o lab/decoded
+          lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx lab/premium-UAE.apk || true
+          python3 premium-uae-lab/inspect_vnext.py lab/decoded lab/jadx lab/out/VNEXT_DIAGNOSTICS.txt
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-VNext-Diagnostics
+          path: lab/out/VNEXT_DIAGNOSTICS.txt
+          retention-days: 2
