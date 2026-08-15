@@ -53,25 +53,40 @@ jobs:
         run: |
           set -euxo pipefail
           APP=lab/decoded-uae/smali/com/mbm_soft/aldahyaplay
+          cp lab/patch_vnext.py lab/out/patch_vnext.py
+          cp lab/patch_v5.py lab/out/patch_v5.py
           cp lab/patch_v6.py lab/out/patch_v6.py
-          grep -R -n -E 'ResumeStore|ResumePrompt|searchToken|filterSeries|filterMovies|currentPosition|seekTo|SharedPreferences' "$APP" > lab/out/target-grep.txt || true
-          find "$APP/ui/movies" "$APP/ui/series" "$APP/utils" -maxdepth 1 -type f | sort > lab/out/target-files.txt
+          grep -R -n -E 'ResumeStore|ResumePrompt|searchToken|filterSeries|filterMovies|currentPosition|seekTo|SharedPreferences|watched_series_|watched_movie_' "$APP" > lab/out/target-grep.txt || true
           tar -czf lab/out/v6-smali-targets.tar.gz \
             "$APP/ui/movies" \
             "$APP/ui/series" \
+            "$APP/ui/movie_info" \
+            "$APP/ui/series_info" \
+            "$APP/ui/vod_exo" \
+            "$APP/ui/vod_vlc" \
             "$APP/utils/ResumeStore.smali" \
             "$APP/utils/ResumePrompt.smali" \
-            "$APP/ui/vod" \
-            "$APP/ui/movie_info" \
-            "$APP/ui/series_info" 2>/dev/null || true
+            "$APP/utils/ResumePrompt$ExoContinue.smali" \
+            "$APP/utils/ResumePrompt$ExoRestart.smali" \
+            "$APP/utils/ResumePrompt$VlcContinue.smali" \
+            "$APP/utils/ResumePrompt$VlcRestart.smali" \
+            "$APP/adapter/MovieAdapter.smali" \
+            "$APP/adapter/SeriesAdapter.smali" \
+            "$APP/adapter/EpisodeAdapter.smali" \
+            lab/decoded-uae/smali/z6/f.smali \
+            lab/decoded-uae/smali/z6/j.smali \
+            lab/decoded-uae/smali/w6/f.smali \
+            lab/decoded-uae/smali/p7/m.smali \
+            lab/decoded-uae/smali/q7/c.smali
 
       - name: Upload analysis
         uses: actions/upload-artifact@v4
         with:
-          name: Premium-UAE-V7-Analysis
+          name: Premium-UAE-V7-Analysis-2
           path: |
+            lab/out/patch_vnext.py
+            lab/out/patch_v5.py
             lab/out/patch_v6.py
             lab/out/target-grep.txt
-            lab/out/target-files.txt
             lab/out/v6-smali-targets.tar.gz
           retention-days: 7
