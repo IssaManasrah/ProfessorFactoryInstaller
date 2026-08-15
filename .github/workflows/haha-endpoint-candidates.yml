@@ -1,0 +1,51 @@
+name: HAHA endpoint candidates and legacy APK inspect
+
+on:
+  push:
+    branches: [ diag/haha-reference-public ]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe endpoint candidates
+        shell: bash
+        run: |
+          set +e
+          : > endpoint-results.txt
+          for u in \
+            'http://and.hah3lx.cyou:8080/APK/Hanew.php' \
+            'http://and.hah3lx.cyou:8080/Hanew.php' \
+            'http://and.hah3lx.cyou/apk/Hanew.php' \
+            'http://and.hah3lx.cyou/APK/hanew.php'; do
+            echo "==== $u" | tee -a endpoint-results.txt
+            curl -sS -i --max-time 12 "$u" | head -n 30 | tee -a endpoint-results.txt
+          done
+      - name: Download and inspect legacy HAHA IPTV APK
+        shell: bash
+        run: |
+          set +e
+          URL='http://img-hahaiptv.net/apknew/HaHaIPTV-PLUS.V2.5.apk'
+          curl -fL -A 'Mozilla/5.0' "$URL" -o LegacyHaha.apk
+          RC=$?
+          echo "curl_exit=$RC" > legacy-result.txt
+          if [ $RC -eq 0 ]; then
+            file LegacyHaha.apk | tee -a legacy-result.txt
+            sha256sum LegacyHaha.apk | tee -a legacy-result.txt
+            unzip -p LegacyHaha.apk classes.dex 2>/dev/null | strings | grep -iE 'Hanew|hah3lx|hahaiptv|player_api|\.php|active.?code|activation|json=' | head -n 2000 > legacy-strings.txt || true
+            curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+            java -jar apktool.jar d -f LegacyHaha.apk -o legacydecoded >/dev/null 2>&1 || true
+            grep -RniE 'Hanew\.php|hah3lx|hahaiptv|player_api\.php|active.?code|activation|json=' legacydecoded/smali* legacydecoded/res 2>/dev/null | head -n 3000 > legacy-decoded-search.txt || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: HAHA-endpoint-candidates
+          path: |
+            endpoint-results.txt
+            legacy-result.txt
+            legacy-strings.txt
+            legacy-decoded-search.txt
+          if-no-files-found: ignore
