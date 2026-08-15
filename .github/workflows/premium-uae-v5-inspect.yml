@@ -1,0 +1,67 @@
+name: Premium UAE V5 Inspect
+
+on:
+  push:
+    branches: [premium-uae-lab]
+    paths:
+      - '.github/workflows/premium-uae-v5-inspect.yml'
+      - 'premium-uae-lab/v5/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build V4 decoded tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/uae.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/uae.apk -o lab/decoded
+          python3 premium-uae-lab/patch_uae.py lab/decoded
+          python3 premium-uae-lab/fix_ranges.py lab/decoded
+          cat premium-uae-lab/vnext_parts/part00 premium-uae-lab/vnext_parts/part01 premium-uae-lab/vnext_parts/part02 premium-uae-lab/vnext_parts/part03 premium-uae-lab/vnext_parts/part04a premium-uae-lab/vnext_parts/part04b0 premium-uae-lab/vnext_parts/part04b1 premium-uae-lab/vnext_parts/part04b2 premium-uae-lab/vnext_parts/part05 > lab/patch_vnext.py.gz.b64
+          base64 -d lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          python3 lab/patch_vnext.py lab/decoded
+      - name: Collect V5 targets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/out/files
+          for f in \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali \
+            lab/decoded/res/layout/activity_movies.xml \
+            lab/decoded/res/layout/activity_series.xml \
+            lab/decoded/res/layout/movie_item.xml; do
+            if [ -f "$f" ]; then cp --parents "$f" lab/out/files/; fi
+          done
+          grep -RIn -B12 -A18 -E 'ACTIVE CODE ACTIVATION|ACTIVE CODE|CODE ACTIVATION|activation|Activation|MY LIST|search_movies|search_series|ProgressDialog|Loading|loading' lab/decoded/smali lab/decoded/res > lab/out/targets-grep.txt || true
+          grep -RIl -E 'ACTIVE CODE ACTIVATION|ACTIVE CODE|CODE ACTIVATION|activation|Activation' lab/decoded/smali lab/decoded/res | head -80 > lab/out/activation-files.txt || true
+          while IFS= read -r f; do [ -f "$f" ] && cp --parents "$f" lab/out/files/; done < lab/out/activation-files.txt
+          grep -RIl 'MY LIST' lab/decoded/smali | head -30 > lab/out/mylist-files.txt || true
+          while IFS= read -r f; do [ -f "$f" ] && cp --parents "$f" lab/out/files/; done < lab/out/mylist-files.txt
+          tar -czf lab/out/v5-target-files.tgz -C lab/out/files .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-V5-Inspect
+          path: lab/out/
+          retention-days: 3
