@@ -1,0 +1,133 @@
+name: Haha VIP IPTV deep runtime smoke
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deep-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Download exact previously emulator-tested APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tested
+          gh run download 31885636258 -n Haha-VIP-IPTV-AndroidTV12-tested -D tested
+          test -f tested/Haha_VIP_IPTV_TESTED.apk
+          echo 'd35adf9a9fe119c80f1c4ae900b80d60cd3236ee4664d5ce3f0e0f5a0da147a3  tested/Haha_VIP_IPTV_TESTED.apk' | sha256sum -c -
+
+      - name: Create deeper runtime script
+        shell: bash
+        run: |
+          cat > haha-deep-smoke.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          PKG=com.haha.viptv2
+          APK=tested/Haha_VIP_IPTV_TESTED.apk
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+
+          adb uninstall "$PKG" >/dev/null 2>&1 || true
+          adb install --no-streaming "$APK" | tee deep-install.txt
+
+          # Pre-grant common media/storage runtime permissions where the API level allows it.
+          for P in \
+            android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.WRITE_EXTERNAL_STORAGE \
+            android.permission.READ_MEDIA_IMAGES \
+            android.permission.READ_MEDIA_VIDEO \
+            android.permission.POST_NOTIFICATIONS; do
+            adb shell pm grant "$PKG" "$P" >/dev/null 2>&1 || true
+          done
+
+          adb logcat -c
+          adb shell am force-stop "$PKG" || true
+          adb shell am start -W -n "$PKG"/com.syria.hydra.ui.intro.IntroActivity | tee deep-start.txt
+          sleep 8
+
+          # If a permission dialog is still focused, Android TV normally has Allow focused.
+          adb shell uiautomator dump /sdcard/haha-window.xml >/dev/null 2>&1 || true
+          adb pull /sdcard/haha-window.xml deep-window-before.xml >/dev/null 2>&1 || true
+          if grep -qiE 'Allow Haha VIP IPTV|permission|photos and media' deep-window-before.xml 2>/dev/null; then
+            adb shell input keyevent KEYCODE_DPAD_CENTER
+            sleep 10
+          fi
+
+          adb exec-out screencap -p > haha-after-permission.png || true
+          sleep 15
+          adb logcat -b all -d > haha-deep-logcat.txt
+          adb shell uiautomator dump /sdcard/haha-window-after.xml >/dev/null 2>&1 || true
+          adb pull /sdcard/haha-window-after.xml deep-window-after.xml >/dev/null 2>&1 || true
+          adb exec-out screencap -p > haha-deep-final.png || true
+
+          PID=$(adb shell pidof "$PKG" | tr -d '\r' || true)
+          echo "PID=$PID" | tee deep-pid.txt
+          TOP=$(adb shell dumpsys activity activities | grep -m1 'mResumedActivity' || true)
+          echo "$TOP" | tee deep-top-activity.txt
+
+          if [[ -z "$PID" ]]; then
+            echo 'Haha VIP IPTV process exited/crashed during deep smoke'
+            grep -nE -C 15 'FATAL EXCEPTION|AndroidRuntime|Process: com.haha.viptv2|ClassNotFoundException|Resources\$NotFoundException|SecurityException|VerifyError|NoClassDefFoundError' haha-deep-logcat.txt | tail -n 500 || true
+            exit 30
+          fi
+
+          if grep -qE 'FATAL EXCEPTION|Process: com.haha.viptv2.*has died' haha-deep-logcat.txt; then
+            echo 'Fatal runtime marker found'
+            grep -nE -C 15 'FATAL EXCEPTION|AndroidRuntime|Process: com.haha.viptv2|has died' haha-deep-logcat.txt | tail -n 500 || true
+            exit 31
+          fi
+
+          echo 'HAHA_DEEP_RUNTIME_PASS' | tee deep-result.txt
+          SH
+          chmod +x haha-deep-smoke.sh
+
+      - name: Android TV 12 deep runtime test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash haha-deep-smoke.sh
+
+      - name: Upload deep runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Haha-VIP-IPTV-deep-runtime-evidence
+          path: |
+            deep-install.txt
+            deep-start.txt
+            deep-pid.txt
+            deep-top-activity.txt
+            deep-result.txt
+            deep-window-before.xml
+            deep-window-after.xml
+            haha-after-permission.png
+            haha-deep-final.png
+            haha-deep-logcat.txt
+          if-no-files-found: ignore

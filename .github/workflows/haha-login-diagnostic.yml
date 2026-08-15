@@ -1,0 +1,81 @@
+name: Haha login diagnostic
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  diagnose-login:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: sudo chmod 666 /dev/kvm
+      - name: Download previously emulator-tested Haha APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9247207529/zip -o haha.zip
+          unzip -q haha.zip
+          test -f Haha_VIP_IPTV_TESTED.apk
+      - name: Create diagnostic script
+        shell: bash
+        run: |
+          cat > diagnose.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+            sleep 2
+          done
+          adb install --no-streaming Haha_VIP_IPTV_TESTED.apk | tee install.txt
+          adb shell pm grant com.haha.viptv2 android.permission.READ_MEDIA_IMAGES 2>/dev/null || true
+          adb shell pm grant com.haha.viptv2 android.permission.READ_EXTERNAL_STORAGE 2>/dev/null || true
+          adb shell am start -W -n com.haha.viptv2/com.syria.hydra.ui.intro.IntroActivity | tee start.txt
+          sleep 4
+          adb shell input text 777815041991
+          sleep 1
+          # activation button center from prior UI dump
+          adb logcat -c
+          adb shell input tap 960 560
+          sleep 20
+          adb logcat -b all -d > login-logcat.txt
+          adb shell uiautomator dump /sdcard/window.xml >/dev/null || true
+          adb pull /sdcard/window.xml window.xml >/dev/null || true
+          adb exec-out screencap -p > login-result.png || true
+          echo '--- activation response log ---' | tee diagnostic-summary.txt
+          grep -a 'FAJER_API_LOGIN_RESPONSE' login-logcat.txt | tee -a diagnostic-summary.txt || true
+          echo '--- important network/runtime lines ---' | tee -a diagnostic-summary.txt
+          grep -aEi 'Not able to login|Activation failed|UnknownHost|ConnectException|SocketTimeout|Cleartext|HTTP|player_api|hah3lx|FATAL EXCEPTION|AndroidRuntime' login-logcat.txt | tail -n 400 | tee -a diagnostic-summary.txt || true
+          echo '--- UI text ---' | tee -a diagnostic-summary.txt
+          grep -o 'text="[^"]*"' window.xml | sort -u | tee -a diagnostic-summary.txt || true
+          SH
+          chmod +x diagnose.sh
+      - name: Android TV 12 login diagnostic
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash diagnose.sh
+      - name: Upload diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Haha-login-777815041991-diagnostic
+          path: |
+            diagnostic-summary.txt
+            login-logcat.txt
+            window.xml
+            login-result.png
+            install.txt
+            start.txt
+          if-no-files-found: ignore

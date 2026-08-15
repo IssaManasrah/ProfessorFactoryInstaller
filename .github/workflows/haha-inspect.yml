@@ -1,0 +1,48 @@
+name: Haha Hydra inspect
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download exact Hydra
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Hydra.apk"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+          curl -fL -A "$UA" -e "https://professorsat.com/" "$URL" -o Hydra.apk
+          test "$(sha256sum Hydra.apk | awk '{print $1}')" = "fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b"
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download apktool
+        shell: bash
+        run: curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+      - name: Decode activation implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f Hydra.apk -o decoded >/dev/null
+          echo '===== IntroViewModel 760-1060 ====='
+          sed -n '760,1060p' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+          echo '===== IntroViewModel 1080-1230 ====='
+          sed -n '1080,1230p' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+          echo '===== Network call candidates in IntroViewModel ====='
+          grep -nE 'OkHttp|Request|FormBody|HttpUrl|URL|decryptString|decryptRawBytes|post\(|add\(|enqueue|execute|retrofit|activation|serial|code|mac|mode' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali | head -n 500 || true
+          echo '===== Other encrypted constants near activation ====='
+          grep -RInaE 'loadActiveCodeActivation|onActivationDataReceived|NativeDecryption|HydraCrypto' decoded/smali/com/syria/hydra | head -n 500 || true
+          tar -czf hydra-activation.tgz decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+      - name: Upload activation inspect
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydra-activation-inspect
+          path: hydra-activation.tgz
+          if-no-files-found: ignore
