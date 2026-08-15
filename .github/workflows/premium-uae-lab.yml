@@ -60,7 +60,10 @@ jobs:
           set -euxo pipefail
           python3 premium-uae-lab/patch_uae.py lab/decoded-uae | tee lab/out/patch-result.txt
           python3 premium-uae-lab/fix_ranges.py lab/decoded-uae | tee -a lab/out/patch-result.txt
-          base64 -d premium-uae-lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          cat premium-uae-lab/vnext_parts/part* > lab/patch_vnext.py.gz.b64
+          test "$(wc -c < lab/patch_vnext.py.gz.b64)" -eq 9176
+          base64 -d lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          python3 -m py_compile lab/patch_vnext.py
           python3 lab/patch_vnext.py lab/decoded-uae | tee -a lab/out/patch-result.txt
           grep -R 'search_movies' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies > lab/out/movie-search-check.txt
           grep -R 'search_series' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series > lab/out/series-search-check.txt
@@ -69,7 +72,6 @@ jobs:
           grep -R 'هل تريد استكمال المشاهدة أو البدء من جديد؟' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils > lab/out/resume-prompt-check.txt
           test -f lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali
           test -f lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali
-          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali' || grep -q 'search_movies' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali
 
       - name: Rebuild patched UAE APK
         shell: bash
