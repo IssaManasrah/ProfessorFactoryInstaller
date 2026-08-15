@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare exact final V8 dialog wrapper
+      - name: Prepare exact final V8 dialog wrapper and strict test script
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,48 +48,84 @@ jobs:
           keytool -genkeypair -noprompt -keystore lab/out/test.keystore -storepass android -keypass android -alias test -dname 'CN=V8 Google TV DPAD,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
           "$BT/zipalign" -f 4 lab/out/test_unsigned.apk lab/out/test_aligned.apk
           "$BT/apksigner" sign --ks lab/out/test.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias test --out lab/out/test.apk lab/out/test_aligned.apk
-      - name: Google TV DPAD verification
+          cat > lab/out/check_focus.py <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          path,text=sys.argv[1],sys.argv[2]
+          root=ET.parse(path).getroot()
+          nodes=[n for n in root.iter('node') if n.attrib.get('text')==text]
+          if not nodes:
+              raise SystemExit(f'MISSING:{text}')
+          n=nodes[0]
+          print(text, n.attrib.get('focused'), n.attrib.get('focusable'), n.attrib.get('bounds'), n.attrib.get('package'))
+          if n.attrib.get('focused')!='true':
+              raise SystemExit(f'NOT_FOCUSED:{text}:{n.attrib}')
+          PY
+          cat > lab/out/dismiss_anr.py <<'PY'
+          import sys, re, xml.etree.ElementTree as ET
+          root=ET.parse(sys.argv[1]).getroot()
+          for n in root.iter('node'):
+              if n.attrib.get('text') in ('Wait','انتظار'):
+                  b=n.attrib.get('bounds','')
+                  nums=list(map(int,re.findall(r'\d+',b)))
+                  if len(nums)==4:
+                      print((nums[0]+nums[2])//2,(nums[1]+nums[3])//2)
+                      break
+          PY
+          cat > lab/out/run-dpad.sh <<'BASH'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          adb wait-for-device
+          sleep 25
+          adb shell service check package | grep -qi found
+          adb shell pm list packages >/dev/null
+          adb push lab/out/test.apk /data/local/tmp/v8test.apk
+          adb shell pm install -r /data/local/tmp/v8test.apk || { sleep 15; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/v8test.apk; }
+          # Clear any emulator System UI ANR before testing app UI.
+          adb shell uiautomator dump /sdcard/pre.xml >/dev/null 2>&1 || true
+          adb pull /sdcard/pre.xml lab/out/pre.xml >/dev/null 2>&1 || true
+          if [[ -s lab/out/pre.xml ]] && grep -q "isn't responding" lab/out/pre.xml; then
+            xy=$(python3 lab/out/dismiss_anr.py lab/out/pre.xml || true)
+            if [[ -n "$xy" ]]; then adb shell input tap $xy; sleep 3; fi
+          fi
+          adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+          sleep 3
+          adb shell uiautomator dump /sdcard/initial.xml >/dev/null
+          adb pull /sdcard/initial.xml lab/out/initial.xml >/dev/null
+          grep -q 'متابعة' lab/out/initial.xml
+          python3 lab/out/check_focus.py lab/out/initial.xml 'متابعة' > lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/dialog-initial.png
+          adb shell input keyevent KEYCODE_DPAD_RIGHT
+          sleep 1
+          adb shell uiautomator dump /sdcard/right.xml >/dev/null
+          adb pull /sdcard/right.xml lab/out/right.xml >/dev/null
+          python3 lab/out/check_focus.py lab/out/right.xml 'من البداية' >> lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/dialog-right.png
+          adb shell input keyevent KEYCODE_DPAD_LEFT
+          sleep 1
+          adb shell uiautomator dump /sdcard/left.xml >/dev/null
+          adb pull /sdcard/left.xml lab/out/left.xml >/dev/null
+          python3 lab/out/check_focus.py lab/out/left.xml 'متابعة' >> lab/out/dpad.txt
+          adb exec-out screencap -p > lab/out/dialog-left.png
+          adb shell input keyevent KEYCODE_DPAD_CENTER
+          sleep 1
+          echo GOOGLE_TV_CENTER_CLICK_OK >> lab/out/dpad.txt
+          adb shell getprop ro.build.characteristics > lab/out/characteristics.txt
+          adb shell getprop ro.build.version.release > lab/out/release.txt
+          echo GOOGLE_TV_DPAD_STRICT_OK > lab/out/result.txt
+          BASH
+          chmod +x lab/out/run-dpad.sh
+      - name: Google TV strict DPAD verification
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google-tv
           arch: x86
           disable-animations: true
-          script: |
-            adb wait-for-device
-            sleep 25
-            adb shell service check package | grep -qi found
-            adb shell pm list packages >/dev/null
-            adb push lab/out/test.apk /data/local/tmp/v8test.apk
-            adb shell pm install -r /data/local/tmp/v8test.apk || (sleep 15; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/v8test.apk)
-            adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
-            sleep 3
-            adb shell uiautomator dump /sdcard/initial.xml >/dev/null
-            adb pull /sdcard/initial.xml lab/out/initial.xml >/dev/null
-            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/initial.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_INITIAL_CONTINUE_FOCUSED')" | tee lab/out/dpad.txt
-            adb exec-out screencap -p > lab/out/dialog-initial.png
-            adb shell input keyevent KEYCODE_DPAD_RIGHT
-            sleep 1
-            adb shell uiautomator dump /sdcard/right.xml >/dev/null
-            adb pull /sdcard/right.xml lab/out/right.xml >/dev/null
-            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/right.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='من البداية']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_RIGHT_RESTART_FOCUSED')" | tee -a lab/out/dpad.txt
-            adb exec-out screencap -p > lab/out/dialog-right.png
-            adb shell input keyevent KEYCODE_DPAD_LEFT
-            sleep 1
-            adb shell uiautomator dump /sdcard/left.xml >/dev/null
-            adb pull /sdcard/left.xml lab/out/left.xml >/dev/null
-            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/left.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_LEFT_CONTINUE_FOCUSED')" | tee -a lab/out/dpad.txt
-            adb exec-out screencap -p > lab/out/dialog-left.png
-            adb shell input keyevent KEYCODE_DPAD_CENTER
-            sleep 1
-            echo GOOGLE_TV_CENTER_CLICK_OK | tee -a lab/out/dpad.txt
-            adb shell getprop ro.build.characteristics > lab/out/characteristics.txt
-            adb shell getprop ro.build.version.release > lab/out/release.txt
-            echo GOOGLE_TV_DPAD_FINAL_OK > lab/out/result.txt
+          script: bash lab/out/run-dpad.sh
       - name: Upload Google TV evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: V8-Google-TV-DPAD-x86-Evidence
+          name: V8-Google-TV-DPAD-x86-Strict-Evidence
           path: lab/out/
           retention-days: 7
