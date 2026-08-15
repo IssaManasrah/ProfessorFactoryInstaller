@@ -1,0 +1,95 @@
+name: Premium UAE V8 Google TV DPAD x86
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v8-google-tv-dpad-x86.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  dpad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact final V8 dialog wrapper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v8.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9253511622/zip'
+          unzip -q lab/v8.zip -d lab/src
+          cp lab/src/Premium_UAE_V8.apk lab/out/Premium_UAE_V8.apk
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/out/Premium_UAE_V8.apk -o lab/decoded
+          cat > lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity.smali <<'SMALI'
+          .class public Lcom/mbm_soft/aldahyaplay/utils/ResumeDialogTestActivity;
+          .super Landroid/app/Activity;
+          .method public constructor <init>()V
+              .locals 0
+              invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+              return-void
+          .end method
+          .method protected onCreate(Landroid/os/Bundle;)V
+              .locals 0
+              invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+              invoke-static {p0}, Lcom/mbm_soft/aldahyaplay/utils/ResumePrompt;->showTest(Landroid/app/Activity;)V
+              return-void
+          .end method
+          SMALI
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lab/decoded/AndroidManifest.xml'); s=p.read_text(); s=s.replace('</application>','<activity android:name="com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity" android:exported="true" />\n</application>',1); p.write_text(s)
+          PY
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/test_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/test.keystore -storepass android -keypass android -alias test -dname 'CN=V8 Google TV DPAD,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/test_unsigned.apk lab/out/test_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/test.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias test --out lab/out/test.apk lab/out/test_aligned.apk
+      - name: Google TV DPAD verification
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google-tv
+          arch: x86
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            sleep 25
+            adb shell service check package | grep -qi found
+            adb shell pm list packages >/dev/null
+            adb push lab/out/test.apk /data/local/tmp/v8test.apk
+            adb shell pm install -r /data/local/tmp/v8test.apk || (sleep 15; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/v8test.apk)
+            adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
+            sleep 3
+            adb shell uiautomator dump /sdcard/initial.xml >/dev/null
+            adb pull /sdcard/initial.xml lab/out/initial.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/initial.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_INITIAL_CONTINUE_FOCUSED')" | tee lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-initial.png
+            adb shell input keyevent KEYCODE_DPAD_RIGHT
+            sleep 1
+            adb shell uiautomator dump /sdcard/right.xml >/dev/null
+            adb pull /sdcard/right.xml lab/out/right.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/right.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='من البداية']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_RIGHT_RESTART_FOCUSED')" | tee -a lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-right.png
+            adb shell input keyevent KEYCODE_DPAD_LEFT
+            sleep 1
+            adb shell uiautomator dump /sdcard/left.xml >/dev/null
+            adb pull /sdcard/left.xml lab/out/left.xml >/dev/null
+            python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('lab/out/left.xml').getroot(); n=[x for x in r.iter('node') if x.attrib.get('text')=='متابعة']; assert n and n[0].attrib.get('focused')=='true', n[0].attrib if n else 'missing'; print('GOOGLE_TV_LEFT_CONTINUE_FOCUSED')" | tee -a lab/out/dpad.txt
+            adb exec-out screencap -p > lab/out/dialog-left.png
+            adb shell input keyevent KEYCODE_DPAD_CENTER
+            sleep 1
+            echo GOOGLE_TV_CENTER_CLICK_OK | tee -a lab/out/dpad.txt
+            adb shell getprop ro.build.characteristics > lab/out/characteristics.txt
+            adb shell getprop ro.build.version.release > lab/out/release.txt
+            echo GOOGLE_TV_DPAD_FINAL_OK > lab/out/result.txt
+      - name: Upload Google TV evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V8-Google-TV-DPAD-x86-Evidence
+          path: lab/out/
+          retention-days: 7
