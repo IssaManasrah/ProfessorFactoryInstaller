@@ -15,7 +15,13 @@ jobs:
           set -euo pipefail
           EXPECTED="fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b"
           URL="https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Hydra.apk"
-          curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$URL" -o Hydra.apk
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+          curl -fL --retry 3 --connect-timeout 15 --max-time 240 \
+            -A "$UA" \
+            -e "https://professorsat.com/" \
+            -H "Accept: application/vnd.android.package-archive,application/octet-stream;q=0.9,*/*;q=0.8" \
+            -H "Accept-Language: ar,en-US;q=0.9,en;q=0.8" \
+            "$URL" -o Hydra.apk
           h=$(sha256sum Hydra.apk | awk '{print $1}')
           s=$(stat -c%s Hydra.apk)
           echo "Downloaded size=$s sha256=$h"
