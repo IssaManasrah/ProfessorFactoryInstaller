@@ -1,0 +1,23 @@
+name: Premium UAE TV Image Check
+
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths:
+      - '.github/workflows/premium-uae-tv-image-check.yml'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List Android TV images
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sdkmanager --list | grep -E 'system-images;android-(30|31|32|33);(android-tv|google-tv);x86_64' | tee tv-images.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tv-images
+          path: tv-images.txt
