@@ -1,0 +1,41 @@
+name: Inspect public HAHA reference APK
+
+on:
+  push:
+    branches: [ diag/haha-reference-public ]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download current HAHA Multimedia APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://haha-multiimedia.com/app/HAHA%20MULTIIMEDIA%283.1.3%29.apk'
+          curl -fL -A 'Mozilla/5.0' -e 'https://haha-multiimedia.com/apps.html' "$URL" -o ReferenceHaha.apk
+          file ReferenceHaha.apk
+          sha256sum ReferenceHaha.apk | tee reference-sha256.txt
+      - name: Decode and targeted inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+          java -jar apktool.jar d -f ReferenceHaha.apk -o refdecoded >/dev/null
+          {
+            echo '=== APK STRINGS ==='
+            unzip -p ReferenceHaha.apk classes.dex 2>/dev/null | strings | grep -iE 'Hanew|hah3lx|player_api|activation|active.?code|json=' | head -n 500 || true
+            echo '=== DECODED SEARCH ==='
+            grep -RniE 'Hanew\.php|hah3lx|player_api\.php|json=|active.?code|Activation|encrypt|decrypt|serial|gyoup' refdecoded/smali* refdecoded/res 2>/dev/null | head -n 2500 || true
+          } > reference-inspect.txt
+          tar -czf reference-decoded-targeted.tgz reference-inspect.txt $(grep -RlEi 'Hanew\.php|hah3lx|player_api\.php|active.?code|Activation' refdecoded/smali* 2>/dev/null | head -n 100) || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Public-HAHA-reference-inspect
+          path: |
+            reference-inspect.txt
+            reference-sha256.txt
+            reference-decoded-targeted.tgz
+          if-no-files-found: error
