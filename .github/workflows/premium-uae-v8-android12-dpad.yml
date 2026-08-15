@@ -56,10 +56,12 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            set -eu
             adb wait-for-device
-            sleep 20
-            adb install --no-incremental -r lab/out/test.apk
+            sleep 30
+            adb shell service check package | grep -qi found
+            adb shell pm list packages >/dev/null
+            adb push lab/out/test.apk /data/local/tmp/v8test.apk
+            adb shell pm install -r /data/local/tmp/v8test.apk || (sleep 15; adb shell service check package; adb shell pm install -r /data/local/tmp/v8test.apk) || (sleep 20; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/v8test.apk)
             adb shell am start -n com.mbm_soft.aldahyaplay/com.mbm_soft.aldahyaplay.utils.ResumeDialogTestActivity
             sleep 3
             adb shell uiautomator dump /sdcard/a.xml >/dev/null
@@ -85,6 +87,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: V8-Android12-DPAD-Evidence
+          name: V8-Android12-DPAD-Evidence-Retry
           path: lab/out/
           retention-days: 7
