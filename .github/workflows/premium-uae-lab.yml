@@ -1,0 +1,79 @@
+name: Premium UAE Lab
+
+on:
+  push:
+    branches: [premium-uae-lab]
+    paths:
+      - '.github/workflows/premium-uae-lab.yml'
+      - 'premium-uae-lab/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download APKs and reverse engineering tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/apks lab/out
+          curl -fL --retry 3 -o lab/apks/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/apks/Premium.apk 'https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Premium.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          curl -fL --retry 3 -o lab/tools/jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip'
+          unzip -q lab/tools/jadx.zip -d lab/tools/jadx
+          chmod +x lab/tools/jadx/bin/jadx
+          sha256sum lab/apks/*.apk lab/tools/apktool.jar lab/tools/jadx.zip | tee lab/out/SHA256SUMS.txt
+
+      - name: Decode UAE and Premium with Apktool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar d -f lab/apks/premium-UAE.apk -o lab/decoded-uae
+          java -jar lab/tools/apktool.jar d -f lab/apks/Premium.apk -o lab/decoded-premium
+
+      - name: Decompile UAE and Premium with JADX
+        shell: bash
+        run: |
+          set -euxo pipefail
+          lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx-uae lab/apks/premium-UAE.apk || true
+          lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx-premium lab/apks/Premium.apk || true
+
+      - name: Build focused analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 premium-uae-lab/analyze.py \
+            --uae-smali lab/decoded-uae \
+            --premium-smali lab/decoded-premium \
+            --uae-java lab/jadx-uae \
+            --premium-java lab/jadx-premium \
+            --out lab/out
+
+      - name: Validate original UAE can rebuild
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/uae-rebuilt-unsigned.apk
+          unzip -t lab/out/uae-rebuilt-unsigned.apk | tee lab/out/rebuild-zip-test.txt
+
+      - name: Upload analysis artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: premium-uae-analysis
+          path: lab/out
+          if-no-files-found: error
+          retention-days: 7
