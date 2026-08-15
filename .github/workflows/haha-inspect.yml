@@ -1,0 +1,48 @@
+name: Haha Hydra inspect
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download exact Hydra
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Hydra.apk"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+          curl -fL -A "$UA" -e "https://professorsat.com/" "$URL" -o Hydra.apk
+          echo "SHA=$(sha256sum Hydra.apk | awk '{print $1}')"
+          test "$(sha256sum Hydra.apk | awk '{print $1}')" = "fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b"
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download apktool
+        shell: bash
+        run: |
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+      - name: Decode and inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f Hydra.apk -o decoded
+          echo '===== MANIFEST ====='
+          sed -n '1,260p' decoded/AndroidManifest.xml
+          echo '===== PACKAGE/LAUNCHER ====='
+          grep -nE 'manifest|application|activity|activity-alias|MAIN|LEANBACK_LAUNCHER|LAUNCHER|provider|service|receiver' decoded/AndroidManifest.xml | head -n 300
+          echo '===== TARGET STRINGS ====='
+          grep -RInaE 'encrypted_string_domains|encrypted_string_vpn|CUSTOM_API_URL|API-V6APK|makeurownsite|tatbatcathatmat|ultracloudcdn|player_api|xmltv|2344.jpg|FirebaseRemoteConfig|host' decoded/smali* decoded/res 2>/dev/null | head -n 600 || true
+          tar -czf hydra-inspect.tgz decoded/AndroidManifest.xml decoded/apktool.yml
+      - name: Upload inspect files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydra-inspect
+          path: hydra-inspect.tgz
+          if-no-files-found: ignore
