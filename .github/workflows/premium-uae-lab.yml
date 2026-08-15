@@ -91,7 +91,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eu
             adb install -r lab/out/Premium_UAE_Enhanced.apk
             adb logcat -c
             adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
