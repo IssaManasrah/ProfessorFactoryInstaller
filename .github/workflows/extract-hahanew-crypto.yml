@@ -1,0 +1,44 @@
+name: Extract HAHA crypto
+on:
+  push:
+    branches: [diag/hahanew-real-apk-final]
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download decode
+        run: |
+          set -euxo pipefail
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -sS -L -A "$UA" -e 'https://shaikhalkar.com/' -H 'Accept: application/vnd.android.package-archive,application/octet-stream,*/*' https://shaikhalkar.com/hahanew.apk -o hahanew.apk
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar -o apktool.jar
+          java -jar apktool.jar d -f hahanew.apk -o decoded
+      - name: Copy crypto/network files
+        run: |
+          set -euxo pipefail
+          mkdir -p crypto
+          for f in \
+            decoded/smali/com/mbm_soft/hahaiptv/remote/DecInterceptor.smali \
+            decoded/smali/c/c/a.smali \
+            decoded/smali/c/c/b.smali \
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/a.smali \
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/b.smali \
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/c.smali \
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/d.smali \
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/IntroActivity.smali
+          do
+            [ -f "$f" ] && cp "$f" crypto/$(echo "$f" | sed 's#/#_#g') || true
+          done
+          grep -RIna -B15 -A30 -E 'getKeyValue|Cipher|SecretKeySpec|IvParameterSpec|AES|DES|Base64|decrypt|encrypt' decoded/smali/com/mbm_soft/hahaiptv/remote decoded/smali/c/c 2>/dev/null > crypto/crypto_hits.txt || true
+          # raw native strings around endpoint/key symbols
+          find decoded/lib -type f -name '*.so' | while read f; do
+            echo "===== $f ====="
+            strings -a -t x "$f" | grep -Ei 'AppApiHelper_getValue|DecInterceptor_getKeyValue|Haha.php|hahaiptv|an-7a7a|AES|DES|CBC|PKCS' || true
+          done > crypto/native_focus.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hahanew-crypto-core
+          path: crypto
