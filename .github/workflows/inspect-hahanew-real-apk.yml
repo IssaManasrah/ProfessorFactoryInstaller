@@ -9,10 +9,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download APK
+      - name: Download APK with browser session
         run: |
-          set -euxo pipefail
-          curl -fL --retry 3 --connect-timeout 15 https://shaikhalkar.com/hahanew.apk -o hahanew.apk
+          set -u
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          mkdir -p probe
+          curl -sS -L -A "$UA" -c probe/cookies.txt -D probe/root_headers.txt https://shaikhalkar.com/ -o probe/root.html || true
+          ok=0
+          i=0
+          for u in \
+            'https://shaikhalkar.com/hahanew.apk' \
+            'https://shaikhalkar.com/hahanew.apk?download=1' \
+            'http://shaikhalkar.com/hahanew.apk' \
+            'https://www.shaikhalkar.com/hahanew.apk'
+          do
+            i=$((i+1))
+            code=$(curl -sS -L --retry 2 --connect-timeout 15 \
+              -A "$UA" -b probe/cookies.txt -c probe/cookies.txt \
+              -e 'https://shaikhalkar.com/' \
+              -H 'Accept: application/vnd.android.package-archive,application/octet-stream,*/*' \
+              -D "probe/headers_$i.txt" -o "probe/body_$i.bin" \
+              -w '%{http_code}' "$u" || true)
+            size=$(wc -c < "probe/body_$i.bin" 2>/dev/null || echo 0)
+            echo "$i $code $size $u" | tee -a probe/attempts.txt
+            if [ "$code" = "200" ] && [ "$size" -gt 1000000 ]; then
+              cp "probe/body_$i.bin" hahanew.apk
+              ok=1
+              break
+            fi
+          done
+          if [ "$ok" != 1 ]; then
+            echo 'APK download failed' >&2
+            exit 2
+          fi
           ls -lh hahanew.apk
           sha256sum hahanew.apk | tee sha256.txt
           file hahanew.apk | tee file.txt
@@ -22,10 +51,12 @@ jobs:
           curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar -o apktool.jar
           java -jar apktool.jar d -f hahanew.apk -o decoded
       - name: Build activation report
+        if: success()
         run: |
           set -euxo pipefail
           mkdir -p report
           cp sha256.txt file.txt report/
+          cp -r probe report/
           cp decoded/apktool.yml report/ || true
           cp decoded/AndroidManifest.xml report/ || true
           {
@@ -45,14 +76,19 @@ jobs:
             grep -E 'versionCode|versionName|renameManifestPackage' decoded/apktool.yml || true
             grep -E 'package=|android:name=' decoded/AndroidManifest.xml | head -n 100 || true
           } > report/package_version.txt
-          # copy small set of smali files that mention activation endpoint or code paths
           grep -RIlE 'Hanew|hah3|mode=active|player_api|activation|activate' decoded/smali* 2>/dev/null | head -n 60 > report/relevant_files.list || true
           while IFS= read -r f; do
             [ -f "$f" ] || continue
             out="report/smali_$(echo "$f" | sed 's#[/ ]#_#g')"
             cp "$f" "$out"
           done < report/relevant_files.list
-      - uses: actions/upload-artifact@v4
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: hahanew-real-apk-inspect
-          path: report
+          path: |
+            report
+            probe
+            sha256.txt
+            file.txt
