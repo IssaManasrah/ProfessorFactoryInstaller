@@ -1,0 +1,241 @@
+name: Haha VIP IPTV build + emulator
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Download exact original Hydra
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Hydra.apk"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+          curl -fL -A "$UA" -e "https://professorsat.com/" "$URL" -o Hydra.apk
+          test "$(sha256sum Hydra.apk | awk '{print $1}')" = "fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b"
+
+      - name: Download apktool
+        shell: bash
+        run: curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+
+      - name: Decode and patch Haha VIP IPTV
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f Hydra.apk -o decoded >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          HOST = 'http://and.hah3lx.cyou:8080'
+          ACT = 'http://and.hah3lx.cyou/APK/Hanew.php'
+          BG = 'http://img-hahaiptv.net/apk-haha-newapk/2344.jpg'
+          EPG = HOST + '/xmltv.php'
+          NEWPKG = 'com.haha.viptv2'
+
+          # Manifest: only app identity / authorities. Keep all Java/Smali component class names com.syria.hydra.* intact.
+          p = Path('decoded/AndroidManifest.xml')
+          s = p.read_text()
+          s = s.replace('package="com.syria.hydra"', f'package="{NEWPKG}"', 1)
+          s = s.replace('com.syria.hydra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION', NEWPKG + '.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION')
+          s = s.replace('android:authorities="com.syria.hydra.fileprovider"', f'android:authorities="{NEWPKG}.fileprovider"')
+          s = s.replace('android:authorities="com.syria.hydra.firebaseinitprovider"', f'android:authorities="{NEWPKG}.firebaseinitprovider"')
+          s = s.replace('android:authorities="com.syria.hydra.androidx-startup"', f'android:authorities="{NEWPKG}.androidx-startup"')
+          p.write_text(s)
+
+          # App label.
+          p = Path('decoded/res/values/strings.xml')
+          s = p.read_text()
+          s, n = re.subn(r'<string name="app_name">.*?</string>', '<string name="app_name">Haha VIP IPTV</string>', s, count=1)
+          assert n == 1, 'app_name not patched'
+          p.write_text(s)
+
+          # NativeConfig: direct stable URLs. No binary DEX/string-pool patching.
+          p = Path('decoded/smali/com/syria/hydra/utils/NativeConfig.smali')
+          s = p.read_text()
+          old = '''    const-string v0, "DjQeQ0hwZ0QIBjJMMF8MB1cXSSUdGkJfCgoG"\n\n    invoke-static {v0}, Lcom/syria/hydra/utils/HydraCrypto;->decryptString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v0\n\n    sput-object v0, Lcom/syria/hydra/utils/NativeConfig;->CUSTOM_API_URL:Ljava/lang/String;'''
+          new = f'''    const-string v0, "{HOST}"\n\n    sput-object v0, Lcom/syria/hydra/utils/NativeConfig;->CUSTOM_API_URL:Ljava/lang/String;'''
+          assert old in s, 'NativeConfig clinit source pattern missing'
+          s = s.replace(old, new, 1)
+
+          bg_pat = r'(?s)\.method public getBackgroundUrl\(\)Ljava/lang/String;.*?\.end method'
+          bg_new = f'''.method public getBackgroundUrl()Ljava/lang/String;\n    .locals 1\n\n    const-string v0, "{BG}"\n\n    return-object v0\n.end method'''
+          s, n = re.subn(bg_pat, lambda m: bg_new, s, count=1)
+          assert n == 1, 'background method not patched'
+
+          epg_pat = r'(?s)\.method public getEpgUrl\(\)Ljava/lang/String;.*?\.end method'
+          epg_new = f'''.method public getEpgUrl()Ljava/lang/String;\n    .locals 1\n\n    const-string v0, "{EPG}"\n\n    return-object v0\n.end method'''
+          s, n = re.subn(epg_pat, lambda m: epg_new, s, count=1)
+          assert n == 1, 'EPG method not patched'
+          p.write_text(s)
+
+          # Firebase must never replace our Xtream host.
+          p = Path('decoded/smali/com/syria/hydra/utils/FirebaseConfigManager.smali')
+          s = p.read_text()
+          pat = r'(?s)\.method private initializeDomainsConfig\(Ljava/lang/String;\)V.*?\.end method'
+          repl = f'''.method private initializeDomainsConfig(Ljava/lang/String;)V\n    .locals 1\n\n    const-string v0, "{HOST}"\n\n    sput-object v0, Lcom/syria/hydra/utils/NativeConfig;->CUSTOM_API_URL:Ljava/lang/String;\n\n    return-void\n.end method'''
+          s, n = re.subn(pat, lambda m: repl, s, count=1)
+          assert n == 1, 'Firebase domains method not patched'
+          p.write_text(s)
+
+          # Activation endpoint + keep username/password from response, but force host to desired Xtream server.
+          p = Path('decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali')
+          s = p.read_text()
+          old = '''    const-string v2, "DjQeQ0hwZ1wFGSVYIVwUHEAdWS4dGkJfH1NGFm8rYztyHgclIgsDI1sT"\n\n    invoke-static {v2}, Lcom/syria/hydra/utils/HydraCrypto;->decryptString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v2'''
+          new = f'''    const-string v2, "{ACT}"'''
+          assert old in s, 'activation endpoint pattern missing'
+          s = s.replace(old, new, 1)
+          old_host = '    sput-object v3, Lcom/syria/hydra/utils/NativeConfig;->CUSTOM_API_URL:Ljava/lang/String;'
+          assert old_host in s, 'activation host assignment missing'
+          s = s.replace(old_host, f'    const-string v3, "{HOST}"\n\n{old_host}', 1)
+          p.write_text(s)
+
+          # Assertions: final decoded source contains required settings.
+          joined = '\n'.join([
+              Path('decoded/AndroidManifest.xml').read_text(),
+              Path('decoded/smali/com/syria/hydra/utils/NativeConfig.smali').read_text(),
+              Path('decoded/smali/com/syria/hydra/utils/FirebaseConfigManager.smali').read_text(),
+              Path('decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali').read_text(),
+          ])
+          for value in (HOST, ACT, BG, NEWPKG):
+              assert value in joined, value
+          print('Patch assertions passed')
+          PY
+
+      - name: Rebuild, align, sign and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar b decoded -o Haha-unsigned.apk
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          echo "Build tools: $BT"
+          "$BT/zipalign" -f -p 4 Haha-unsigned.apk Haha-aligned.apk
+          "$BT/zipalign" -c -p 4 Haha-aligned.apk
+          keytool -genkeypair -keystore haha-test.keystore -storepass android -keypass android -alias haha -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Haha VIP IPTV" >/dev/null 2>&1
+          "$BT/apksigner" sign --ks haha-test.keystore --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out Haha_VIP_IPTV_TESTED.apk Haha-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs Haha_VIP_IPTV_TESTED.apk | tee signature.txt
+          "$BT/zipalign" -c -p 4 Haha_VIP_IPTV_TESTED.apk
+          unzip -t Haha_VIP_IPTV_TESTED.apk | tail -n 3
+          sha256sum Haha_VIP_IPTV_TESTED.apk | tee haha-sha256.txt
+
+      - name: Create emulator smoke test script
+        shell: bash
+        run: |
+          cat > haha-smoke.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+
+          echo '===== BASELINE: ORIGINAL HYDRA ====='
+          adb uninstall com.syria.hydra >/dev/null 2>&1 || true
+          adb install --no-streaming Hydra.apk | tee original-install.txt
+          adb logcat -c
+          adb shell am force-stop com.syria.hydra || true
+          adb shell am start -W -n com.syria.hydra/com.syria.hydra.ui.intro.IntroActivity | tee original-start.txt
+          sleep 12
+          adb shell pidof com.syria.hydra | tee original-pid.txt
+          adb logcat -b all -d > original-logcat.txt
+          if ! adb shell pidof com.syria.hydra >/dev/null; then
+            echo 'Original Hydra did not remain alive on emulator'
+            tail -n 250 original-logcat.txt
+            exit 20
+          fi
+          adb exec-out screencap -p > original-hydra.png || true
+
+          echo '===== TEST: HAHA VIP IPTV ====='
+          adb uninstall com.haha.viptv2 >/dev/null 2>&1 || true
+          adb install --no-streaming Haha_VIP_IPTV_TESTED.apk | tee haha-install.txt
+          adb logcat -c
+          adb shell am force-stop com.haha.viptv2 || true
+          adb shell am start -W -n com.haha.viptv2/com.syria.hydra.ui.intro.IntroActivity | tee haha-start.txt
+          sleep 18
+          adb logcat -b all -d > haha-logcat.txt
+          adb exec-out screencap -p > haha-home.png || true
+
+          PID=$(adb shell pidof com.haha.viptv2 | tr -d '\r' || true)
+          echo "PID=$PID" | tee haha-pid.txt
+          if [[ -z "$PID" ]]; then
+            echo 'Haha VIP IPTV crashed/exited after launch'
+            grep -nE -C 12 'FATAL EXCEPTION|AndroidRuntime|Process: com.haha.viptv2|ClassNotFoundException|Resources\$NotFoundException|SecurityException|VerifyError|NoClassDefFoundError' haha-logcat.txt | tail -n 350 || true
+            exit 30
+          fi
+
+          if grep -qE 'FATAL EXCEPTION.*|Process: com.haha.viptv2.*has died' haha-logcat.txt; then
+            echo 'Fatal runtime marker found for Haha VIP IPTV'
+            grep -nE -C 12 'FATAL EXCEPTION|AndroidRuntime|Process: com.haha.viptv2|has died' haha-logcat.txt | tail -n 350 || true
+            exit 31
+          fi
+
+          echo 'HAHA_EMULATOR_SMOKE_PASS' | tee emulator-result.txt
+          SH
+          chmod +x haha-smoke.sh
+
+      - name: Android TV 12 emulator baseline + Haha smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash haha-smoke.sh
+
+      - name: Upload emulator-tested Haha APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Haha-VIP-IPTV-AndroidTV12-tested
+          path: |
+            Haha_VIP_IPTV_TESTED.apk
+            haha-sha256.txt
+            signature.txt
+            emulator-result.txt
+            haha-home.png
+          if-no-files-found: error
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Haha-VIP-IPTV-emulator-evidence
+          path: |
+            original-install.txt
+            original-start.txt
+            original-pid.txt
+            original-logcat.txt
+            original-hydra.png
+            haha-install.txt
+            haha-start.txt
+            haha-pid.txt
+            haha-logcat.txt
+            haha-home.png
+            signature.txt
+            haha-sha256.txt
+          if-no-files-found: ignore
