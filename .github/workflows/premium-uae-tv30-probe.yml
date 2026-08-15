@@ -1,0 +1,36 @@
+name: TV 30 Probe
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-tv30-probe.yml']
+jobs:
+  probe-google-tv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google-tv
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            adb shell getprop ro.build.version.release
+            adb shell getprop ro.build.characteristics
+            echo GOOGLE_TV_30_OK
+  probe-android-tv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: android-tv
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            adb shell getprop ro.build.version.release
+            adb shell getprop ro.build.characteristics
+            echo ANDROID_TV_30_OK
