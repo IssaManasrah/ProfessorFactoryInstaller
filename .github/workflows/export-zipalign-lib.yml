@@ -1,0 +1,26 @@
+name: Export Zipalign Lib
+on:
+  push:
+    branches: [ fix/haha-agent-logo-emulator ]
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Collect zipalign dependency
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          ldd "$BT/zipalign" || true
+          find "$ANDROID_HOME" -name 'libc++.so*' -print
+          mkdir out
+          LIB=$(find "$ANDROID_HOME" -name 'libc++.so' | head -1)
+          test -n "$LIB"
+          cp "$LIB" out/libc++.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zipalign-libcpp
+          path: out/libc++.so
+          if-no-files-found: error
