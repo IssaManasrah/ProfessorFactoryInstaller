@@ -1,0 +1,51 @@
+name: Inspect reference Haha APK
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download reference Haha APK candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          for u in \
+            'https://professorsat.com/haha2026.apk' \
+            'https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/haha2026.apk' \
+            'https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/HAHA.apk'; do
+            echo "TRY=$u"
+            if curl -fL -A "$UA" -e 'https://professorsat.com/' "$u" -o ReferenceHaha.apk; then
+              echo "$u" > reference-url.txt
+              file ReferenceHaha.apk
+              sha256sum ReferenceHaha.apk
+              exit 0
+            fi
+          done
+          exit 1
+      - name: Decode and inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+          java -jar apktool.jar d -f ReferenceHaha.apk -o refdecoded >/dev/null
+          {
+            echo '=== MANIFEST ==='
+            head -n 60 refdecoded/AndroidManifest.xml
+            echo '=== NETWORK/API SEARCH ==='
+            grep -RniE 'Hanew\.php|hah3lx|player_api\.php|get\.php|json=|loadActiveCode|ActivationResponse|Not able to login|active code|CUSTOM_API_URL' refdecoded/smali* refdecoded/res 2>/dev/null | head -n 1200 || true
+          } > reference-inspect.txt
+          tar -czf reference-targeted.tgz reference-inspect.txt reference-url.txt $(grep -RlE 'Hanew\.php|hah3lx|loadActiveCode|ActivationResponse' refdecoded/smali* 2>/dev/null | head -n 50) || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Haha-reference-inspect
+          path: |
+            reference-inspect.txt
+            reference-url.txt
+            reference-targeted.tgz
+          if-no-files-found: ignore
