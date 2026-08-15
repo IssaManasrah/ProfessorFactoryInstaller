@@ -1,0 +1,21 @@
+name: Export Apktool
+on:
+  push:
+    branches: [ fix/haha-agent-logo-emulator ]
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download apktool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+          java -jar apktool.jar --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apktool-3.0.3
+          path: apktool.jar
+          if-no-files-found: error
