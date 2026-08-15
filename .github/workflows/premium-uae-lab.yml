@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 jobs:
-  analyze:
+  build-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Download APKs and reverse engineering tools
+      - name: Download APKs and tools
         shell: bash
         run: |
           set -euxo pipefail
@@ -39,92 +39,86 @@ jobs:
           chmod +x lab/tools/jadx/bin/jadx
           sha256sum lab/apks/*.apk lab/tools/apktool.jar lab/tools/jadx.zip | tee lab/out/SHA256SUMS.txt
 
-      - name: Decode UAE and Premium with Apktool
+      - name: Decode both APKs
         shell: bash
         run: |
           set -euxo pipefail
           java -jar lab/tools/apktool.jar d -f lab/apks/premium-UAE.apk -o lab/decoded-uae
           java -jar lab/tools/apktool.jar d -f lab/apks/Premium.apk -o lab/decoded-premium
 
-      - name: Decompile UAE and Premium with JADX
+      - name: Decompile comparison with JADX
         shell: bash
         run: |
           set -euxo pipefail
           lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx-uae lab/apks/premium-UAE.apk || true
           lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx-premium lab/apks/Premium.apk || true
+          python3 premium-uae-lab/analyze.py --uae-smali lab/decoded-uae --premium-smali lab/decoded-premium --uae-java lab/jadx-uae --premium-java lab/jadx-premium --out lab/out
 
-      - name: Build focused analysis report
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 premium-uae-lab/analyze.py \
-            --uae-smali lab/decoded-uae \
-            --premium-smali lab/decoded-premium \
-            --uae-java lab/jadx-uae \
-            --premium-java lab/jadx-premium \
-            --out lab/out
-
-      - name: Export targeted app implementation
+      - name: Apply deterministic UAE patch
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p lab/out/targeted/uae-smali lab/out/targeted/premium-smali lab/out/targeted/uae-java lab/out/targeted/premium-java
-          for rel in \
-            smali/com/mbm_soft/aldahyaplay/ui/movies \
-            smali/com/mbm_soft/aldahyaplay/ui/series \
-            smali/com/mbm_soft/aldahyaplay/ui/series_info \
-            smali/com/mbm_soft/aldahyaplay/ui/movie_info \
-            smali/com/mbm_soft/aldahyaplay/ui/vod_exo \
-            smali/com/mbm_soft/aldahyaplay/ui/vod_vlc \
-            smali/com/mbm_soft/aldahyaplay/adapter \
-            smali/com/mbm_soft/aldahyaplay/data/local/db; do
-            [ -e "lab/decoded-uae/$rel" ] && mkdir -p "lab/out/targeted/uae-smali/$(dirname "$rel")" && cp -a "lab/decoded-uae/$rel" "lab/out/targeted/uae-smali/$rel"
-          done
-          for rel in \
-            smali/com/mbm_soft/premiumtv/ui/movies \
-            smali/com/mbm_soft/premiumtv/ui/series \
-            smali/com/mbm_soft/premiumtv/ui/series_info \
-            smali/com/mbm_soft/premiumtv/ui/movie_info \
-            smali/com/mbm_soft/premiumtv/ui/vod_exo \
-            smali/com/mbm_soft/premiumtv/ui/vod_vlc \
-            smali/com/mbm_soft/premiumtv/adapter \
-            smali/com/mbm_soft/premiumtv/data/local/db; do
-            [ -e "lab/decoded-premium/$rel" ] && mkdir -p "lab/out/targeted/premium-smali/$(dirname "$rel")" && cp -a "lab/decoded-premium/$rel" "lab/out/targeted/premium-smali/$rel"
-          done
-          for rel in \
-            sources/com/mbm_soft/aldahyaplay/ui/movies \
-            sources/com/mbm_soft/aldahyaplay/ui/series \
-            sources/com/mbm_soft/aldahyaplay/ui/series_info \
-            sources/com/mbm_soft/aldahyaplay/ui/movie_info \
-            sources/com/mbm_soft/aldahyaplay/ui/vod_exo \
-            sources/com/mbm_soft/aldahyaplay/ui/vod_vlc \
-            sources/com/mbm_soft/aldahyaplay/adapter \
-            sources/com/mbm_soft/aldahyaplay/data/local/db; do
-            [ -e "lab/jadx-uae/$rel" ] && mkdir -p "lab/out/targeted/uae-java/$(dirname "$rel")" && cp -a "lab/jadx-uae/$rel" "lab/out/targeted/uae-java/$rel"
-          done
-          for rel in \
-            sources/com/mbm_soft/premiumtv/ui/movies \
-            sources/com/mbm_soft/premiumtv/ui/series \
-            sources/com/mbm_soft/premiumtv/ui/series_info \
-            sources/com/mbm_soft/premiumtv/ui/movie_info \
-            sources/com/mbm_soft/premiumtv/ui/vod_exo \
-            sources/com/mbm_soft/premiumtv/ui/vod_vlc \
-            sources/com/mbm_soft/premiumtv/adapter \
-            sources/com/mbm_soft/premiumtv/data/local/db; do
-            [ -e "lab/jadx-premium/$rel" ] && mkdir -p "lab/out/targeted/premium-java/$(dirname "$rel")" && cp -a "lab/jadx-premium/$rel" "lab/out/targeted/premium-java/$rel"
-          done
+          python3 premium-uae-lab/patch_uae.py lab/decoded-uae | tee lab/out/patch-result.txt
+          grep -R "streamDisplayName LIKE '%'|| ? || '%'" lab/decoded-uae/smali* > lab/out/movie-search-check.txt
+          grep -R "title LIKE '%'|| ? || '%'" lab/decoded-uae/smali* > lab/out/series-search-check.txt
+          test -f lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali
+          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali'
+          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity$d.smali'
 
-      - name: Validate original UAE can rebuild
+      - name: Rebuild patched UAE APK
         shell: bash
         run: |
           set -euxo pipefail
-          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/uae-rebuilt-unsigned.apk
-          unzip -t lab/out/uae-rebuilt-unsigned.apk | tee lab/out/rebuild-zip-test.txt
+          java -jar lab/tools/apktool.jar b lab/decoded-uae -o lab/out/Premium_UAE_Enhanced_unsigned.apk
+          unzip -t lab/out/Premium_UAE_Enhanced_unsigned.apk | tee lab/out/rebuild-zip-test.txt
 
-      - name: Upload analysis artifact
+      - name: Sign and verify APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/lab.keystore -storepass android -keypass android -alias premiumuae -dname 'CN=Premium UAE Lab,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_Enhanced_unsigned.apk lab/out/Premium_UAE_Enhanced_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/lab.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias premiumuae --out lab/out/Premium_UAE_Enhanced.apk lab/out/Premium_UAE_Enhanced_aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs lab/out/Premium_UAE_Enhanced.apk | tee lab/out/apksigner-verify.txt
+
+      - name: Emulator launch smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -euxo pipefail
+            adb install -r lab/out/Premium_UAE_Enhanced.apk
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 12
+            adb shell pidof com.mbm_soft.aldahyaplay | tee lab/out/emulator-pid.txt || true
+            adb logcat -d > lab/out/emulator-logcat.txt
+            if grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/emulator-logcat.txt > lab/out/fatal-check.txt; then
+              cat lab/out/fatal-check.txt
+              exit 1
+            fi
+            echo 'EMULATOR_SMOKE_OK' | tee lab/out/emulator-result.txt
+
+      - name: Upload enhanced APK and test evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: premium-uae-analysis
-          path: lab/out
-          if-no-files-found: error
+          name: Premium-UAE-Enhanced
+          path: |
+            lab/out/Premium_UAE_Enhanced.apk
+            lab/out/patch-result.txt
+            lab/out/apksigner-verify.txt
+            lab/out/emulator-result.txt
+            lab/out/emulator-pid.txt
+            lab/out/emulator-logcat.txt
+            lab/out/fatal-check.txt
+            lab/out/movie-search-check.txt
+            lab/out/series-search-check.txt
+            lab/out/REPORT.md
+            lab/out/SHA256SUMS.txt
+          if-no-files-found: warn
           retention-days: 7
