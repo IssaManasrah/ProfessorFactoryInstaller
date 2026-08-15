@@ -6,285 +6,45 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  rebuild-and-emulator-test:
+  inspect-public-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout validation branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: haha-vip-ci-20260815
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Enable KVM acceleration
+      - name: Download public candidate
         shell: bash
         run: |
           set -euxo pipefail
-          test -e /dev/kvm
-          sudo chmod 666 /dev/kvm
+          curl -A 'Mozilla/5.0' -fL --connect-timeout 15 --max-time 180 --retry 2 'https://shaikhalkar.com/hydra2026.apk' -o public.apk
+          ls -lh public.apk
+          sha256sum public.apk
+          file public.apk
+          unzip -t public.apk | tail -5
 
-      - name: Download exact Hydra original
-        shell: bash
-        run: |
-          set -euo pipefail
-          EXPECTED='fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b'
-          URLS=(
-            'https://professorsat.com/hydra2026.apk'
-            'https://www.professorsat.com/hydra2026.apk'
-            'https://shaikhalkar.com/hydra2026.apk'
-            'https://www.shaikhalkar.com/hydra2026.apk'
-          )
-          FOUND=0
-          for u in "${URLS[@]}"; do
-            echo "Trying $u"
-            rm -f Hydra.apk
-            if curl -A 'Mozilla/5.0' -fL --connect-timeout 15 --max-time 120 --retry 2 "$u" -o Hydra.apk; then
-              GOT=$(sha256sum Hydra.apk | awk '{print $1}')
-              echo "SHA256=$GOT"
-              if [ "$GOT" = "$EXPECTED" ]; then
-                echo "Exact uploaded Hydra matched: $u"
-                FOUND=1
-                break
-              fi
-            fi
-          done
-          if [ "$FOUND" != 1 ]; then
-            echo 'Could not obtain the exact uploaded Hydra.apk by SHA-256.'
-            exit 22
-          fi
-
-      - name: Download Apktool and Android build tools
+      - name: Inspect package, dex and resources
         shell: bash
         run: |
           set -euxo pipefail
-          curl -fL --retry 3 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' -o apktool.jar
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
-          java -jar apktool.jar --version
-
-      - name: Decode original APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          rm -rf hydra-src
-          java -jar apktool.jar d -f Hydra.apk -o hydra-src
-
-      - name: Patch API endpoints, package, name and icon
-        shell: bash
-        env:
-          ICON_B64: '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'
-        run: |
-          set -euxo pipefail
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          echo "AAPT=$AAPT"
+          "$AAPT" dump badging public.apk | head -40
+          echo '=== APK entries ==='
+          unzip -l public.apk | sed -n '1,120p'
+          echo '=== Key entry sizes/hashes ==='
           python3 - <<'PY'
-          from pathlib import Path
-          import os, base64, xml.etree.ElementTree as ET
-
-          root_dir = Path('hydra-src')
-          replacements = {
-              'DjQeQ0hwZ0QIBjJMMF8MB1cXSSUdGkJfCgoG': 'DjQeQ0hwZ1AKFm5FMltQHktaTjJcDBcKAAoG',
-              'DjQeQ0hwZ0QIBjJMMF8MB1cXSSUdGkJfCgoGSTgHXwYpZkEMAg..': 'DjQeQ0hwZ1AKFm5FMltQHktaTjJcDBcKAAoGSTgHXwYpZkEMAg..',
-              'DjQeQ0hwZ1wFGSVYIVwUHEAdWS4dGkJfH1NGFm8rYztyHgclIgsDI1sT': 'DjQeQ0hwZ1AKFm5FMltQHktaTjJcDAJzYHkZLiEEVgVxOFkU',
-              'DjQeQwFlZx4QEzRPMkcAE0ccTD9eGFkcSEtMSXJZB0ZxIkED': 'DjQeQ0hwZ1gJFW1FMlsCG0MAW2VdHFkdUUJdSygLWxNyJlQTEzBGfAFQRgdaRztU',
-          }
-          counts = {k: 0 for k in replacements}
-          for p in list(root_dir.glob('smali*/**/*.smali')):
-              s = p.read_text(errors='ignore')
-              orig = s
-              for old, new in replacements.items():
-                  c = s.count(old)
-                  if c:
-                      counts[old] += c
-                      s = s.replace(old, new)
-              if s != orig:
-                  p.write_text(s)
-          print('Endpoint replacement counts:', counts)
-          if any(v != 1 for v in counts.values()):
-              raise SystemExit(f'Unexpected endpoint occurrence count: {counts}')
-
-          manifest = root_dir / 'AndroidManifest.xml'
-          A = '{http://schemas.android.com/apk/res/android}'
-          ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
-          tree = ET.parse(manifest)
-          r = tree.getroot()
-          r.set('package', 'com.haha.viptv2')
-          app = r.find('application')
-          if app is None:
-              raise SystemExit('application element missing')
-          app.set(A+'label', 'Haha VIP IPTV')
-          for el in r.iter():
-              for key in (A+'authorities', A+'permission'):
-                  val = el.get(key)
-                  if val and 'com.syria.hydra' in val:
-                      el.set(key, val.replace('com.syria.hydra', 'com.haha.viptv2'))
-              if el.tag in ('permission', 'uses-permission'):
-                  key = A+'name'
-                  val = el.get(key)
-                  if val and val.startswith('com.syria.hydra.'):
-                      el.set(key, val.replace('com.syria.hydra', 'com.haha.viptv2', 1))
-          tree.write(manifest, encoding='utf-8', xml_declaration=True)
-
-          Path('/tmp/haha-icon.jpg').write_bytes(base64.b64decode(os.environ['ICON_B64']))
+          import zipfile,hashlib
+          z=zipfile.ZipFile('public.apk')
+          for n in z.namelist():
+              if n in ('AndroidManifest.xml','resources.arsc','classes.dex','classes2.dex','classes3.dex') or n.startswith('lib/') or n.startswith('assets/'):
+                  d=z.read(n)
+                  print(len(d),hashlib.sha256(d).hexdigest(),n)
           PY
-
-          python3 -m pip -q install pillow
-          python3 - <<'PY'
-          from pathlib import Path
-          from PIL import Image
-          src = Image.open('/tmp/haha-icon.jpg').convert('RGB')
-
-          def square(path, size):
-              p=Path(path)
-              if not p.exists(): return
-              im=src.copy(); im.thumbnail((size,size), Image.Resampling.LANCZOS)
-              bg=Image.new('RGB',(size,size),'white')
-              bg.paste(im,((size-im.width)//2,(size-im.height)//2))
-              bg.save(p,'PNG',optimize=True)
-
-          sizes={'mdpi':48,'hdpi':72,'xhdpi':96,'xxhdpi':144,'xxxhdpi':192}
-          for dens,sz in sizes.items():
-              for name in ('ic_launcher.png','ic_launcher_round.png','ic_launcher_foreground.png'):
-                  square(f'hydra-src/res/mipmap-{dens}/{name}', sz)
-          square('hydra-src/res/drawable/app_logo.png', 512)
-
-          for name in ('ic_banner.png','ic_banner_foreground.png'):
-              p=Path('hydra-src/res/mipmap-xhdpi')/name
-              if p.exists():
-                  logo=src.copy(); logo.thumbnail((150,150),Image.Resampling.LANCZOS)
-                  bg=Image.new('RGB',(320,180),'white')
-                  bg.paste(logo,((320-logo.width)//2,(180-logo.height)//2))
-                  bg.save(p,'PNG',optimize=True)
-          PY
-
-          grep -R -n 'CUSTOM_API_URL' hydra-src/smali* | head -50 | tee custom-api-url-locations.txt || true
-
-      - name: Rebuild APK cleanly from Smali/resources
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p dist
-          java -jar apktool.jar b hydra-src -o dist/Haha_VIP_IPTV_unsigned.apk
-
-      - name: Zipalign and sign with Android apksigner
-        shell: bash
-        run: |
-          set -euxo pipefail
-          BT="$ANDROID_HOME/build-tools/35.0.0"
-          "$BT/zipalign" -p -f 4 dist/Haha_VIP_IPTV_unsigned.apk dist/Haha_VIP_IPTV_aligned.apk
-          keytool -genkeypair -noprompt -keystore haha-ci.keystore -storepass android -keypass android -alias haha -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Haha VIP IPTV CI,O=ShaikhAlKar,C=JO'
-          "$BT/apksigner" sign --ks haha-ci.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias haha --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out dist/Haha_VIP_IPTV_GITHUB_TESTED.apk dist/Haha_VIP_IPTV_aligned.apk
-          "$BT/zipalign" -c -p 4 dist/Haha_VIP_IPTV_GITHUB_TESTED.apk
-          "$BT/apksigner" verify --verbose --print-certs dist/Haha_VIP_IPTV_GITHUB_TESTED.apk | tee signature-verification.txt
-          "$BT/aapt" dump badging dist/Haha_VIP_IPTV_GITHUB_TESTED.apk | tee apk-badging.txt
-          grep -q "package: name='com.haha.viptv2'" apk-badging.txt
-          grep -q "application-label:'Haha VIP IPTV'" apk-badging.txt
-          sha256sum dist/Haha_VIP_IPTV_GITHUB_TESTED.apk | tee final-sha256.txt
-
-      - name: Android TV 12 emulator install/launch/crash test
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 31
-          target: android-tv
-          arch: x86
-          profile: tv_1080p
-          disable-animations: true
-          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          script: |
-            set -euxo pipefail
-            APK='dist/Haha_VIP_IPTV_GITHUB_TESTED.apk'
-            PACKAGE='com.haha.viptv2'
-            adb wait-for-device
-            adb shell input keyevent 82 || true
-            adb logcat -c
-            set +e
-            adb install --no-streaming -r "$APK" 2>&1 | tee install-result.txt
-            RC=${PIPESTATUS[0]}
-            set -e
-            test "$RC" -eq 0
-            grep -q 'Success' install-result.txt
-            adb shell dumpsys package "$PACKAGE" > package-dump.txt
-            grep -q "$PACKAGE" package-dump.txt
-
-            RESOLVED=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER "$PACKAGE" 2>/dev/null | tr -d '\r' | tail -1 || true)
-            if [ -z "$RESOLVED" ] || echo "$RESOLVED" | grep -qi 'No activity'; then
-              RESOLVED=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$PACKAGE" 2>/dev/null | tr -d '\r' | tail -1 || true)
-            fi
-            echo "Resolved activity: $RESOLVED" | tee start-result.txt
-            if [ -z "$RESOLVED" ] || echo "$RESOLVED" | grep -qi 'No activity'; then
-              adb shell monkey -p "$PACKAGE" 1 | tee -a start-result.txt
-            else
-              adb shell am force-stop "$PACKAGE"
-              adb shell am start -W -n "$RESOLVED" | tee -a start-result.txt
-            fi
-
-            sleep 15
-            adb logcat -d -v threadtime > emulator-logcat.txt
-            adb shell dumpsys activity activities > activity-dump.txt
-            adb shell uiautomator dump /sdcard/window.xml || true
-            adb pull /sdcard/window.xml window.xml || true
-            adb exec-out screencap -p > haha-home.png || true
-
-            if grep -A25 -B5 -E "Process: $PACKAGE|FATAL EXCEPTION" emulator-logcat.txt | grep -q "$PACKAGE"; then
-              echo 'Detected fatal crash for Haha VIP IPTV'
-              grep -A40 -B10 -E "Process: $PACKAGE|FATAL EXCEPTION" emulator-logcat.txt || true
-              exit 31
-            fi
-            PID=$(adb shell pidof "$PACKAGE" | tr -d '\r' || true)
-            echo "PID after 15 seconds: $PID"
-            if [ -z "$PID" ]; then
-              echo 'Haha VIP IPTV process is not alive after launch'
-              tail -300 emulator-logcat.txt
-              exit 32
-            fi
-
-            adb shell input keyevent KEYCODE_DPAD_RIGHT
-            adb shell input keyevent KEYCODE_DPAD_DOWN
-            adb shell input keyevent KEYCODE_DPAD_CENTER
-            sleep 5
-            adb logcat -d -v threadtime > emulator-logcat-after-dpad.txt
-            PID2=$(adb shell pidof "$PACKAGE" | tr -d '\r' || true)
-            test -n "$PID2"
-            if grep -A25 -B5 -E "Process: $PACKAGE|FATAL EXCEPTION" emulator-logcat-after-dpad.txt | grep -q "$PACKAGE"; then
-              echo 'Detected fatal crash after D-pad smoke test'
-              exit 33
-            fi
-
-      - name: Publish only emulator-passed APK to temporary branch
-        if: success()
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add dist/Haha_VIP_IPTV_GITHUB_TESTED.apk final-sha256.txt signature-verification.txt apk-badging.txt
-          git commit -m 'Add Android TV emulator-passed Haha VIP IPTV APK'
-          git push origin HEAD:haha-vip-ci-20260815
-
-      - name: Upload APK and emulator evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Haha-VIP-IPTV-emulator-test
-          path: |
-            dist/Haha_VIP_IPTV_GITHUB_TESTED.apk
-            install-result.txt
-            start-result.txt
-            package-dump.txt
-            emulator-logcat.txt
-            emulator-logcat-after-dpad.txt
-            activity-dump.txt
-            window.xml
-            haha-home.png
-            signature-verification.txt
-            apk-badging.txt
-            final-sha256.txt
-            custom-api-url-locations.txt
-          if-no-files-found: ignore
+          echo '=== Search Hydra markers in dex ==='
+          unzip -p public.apk classes.dex > public-classes.dex
+          strings -a public-classes.dex | grep -E 'com\.syria\.hydra|encrypted_string_domains|CUSTOM_API_URL|makeurownsite|ultracloudcdn|tatbatcathatmat|API-V6APK|f@j3r_H1dr' | head -100 || true
