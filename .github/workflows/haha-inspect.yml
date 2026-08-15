@@ -25,33 +25,24 @@ jobs:
       - name: Download apktool
         shell: bash
         run: curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
-      - name: Decode and inspect targeted code
+      - name: Decode activation implementation
         shell: bash
         run: |
           set -euo pipefail
           java -jar apktool.jar d -f Hydra.apk -o decoded >/dev/null
-          echo '===== NativeConfig 1-560 ====='
-          sed -n '1,560p' decoded/smali/com/syria/hydra/utils/NativeConfig.smali
-          echo '===== FirebaseConfigManager 100-520 ====='
-          sed -n '100,520p' decoded/smali/com/syria/hydra/utils/FirebaseConfigManager.smali
-          echo '===== IntroViewModel 1750-1930 ====='
-          sed -n '1750,1930p' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
-          echo '===== Activation/API candidates ====='
-          grep -RInaE 'API-V6APK|makeurownsite|activation|Activation|active|serial|player_api|CUSTOM_API_URL|encrypted_string_domains|encrypted_string_vpn|2344|background|Glide|decrypt|native' decoded/smali/com/syria/hydra | head -n 1200 || true
-          echo '===== app_name resources ====='
-          grep -RIna '<string name="app_name"' decoded/res/values* 2>/dev/null || true
-          echo '===== native ABI list ====='
-          find decoded/lib -maxdepth 2 -type f -printf '%P\n' 2>/dev/null | sort | head -n 300 || true
-          tar -czf hydra-targeted.tgz \
-            decoded/AndroidManifest.xml decoded/apktool.yml \
-            decoded/smali/com/syria/hydra/utils/NativeConfig.smali \
-            decoded/smali/com/syria/hydra/utils/FirebaseConfigManager.smali \
-            decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali \
-            decoded/res/values/strings.xml
-      - name: Upload targeted inspect files
+          echo '===== IntroViewModel 760-1060 ====='
+          sed -n '760,1060p' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+          echo '===== IntroViewModel 1080-1230 ====='
+          sed -n '1080,1230p' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+          echo '===== Network call candidates in IntroViewModel ====='
+          grep -nE 'OkHttp|Request|FormBody|HttpUrl|URL|decryptString|decryptRawBytes|post\(|add\(|enqueue|execute|retrofit|activation|serial|code|mac|mode' decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali | head -n 500 || true
+          echo '===== Other encrypted constants near activation ====='
+          grep -RInaE 'loadActiveCodeActivation|onActivationDataReceived|NativeDecryption|HydraCrypto' decoded/smali/com/syria/hydra | head -n 500 || true
+          tar -czf hydra-activation.tgz decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali
+      - name: Upload activation inspect
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hydra-targeted-inspect
-          path: hydra-targeted.tgz
+          name: hydra-activation-inspect
+          path: hydra-activation.tgz
           if-no-files-found: ignore
