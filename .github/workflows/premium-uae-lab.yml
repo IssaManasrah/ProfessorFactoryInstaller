@@ -64,6 +64,56 @@ jobs:
             --premium-java lab/jadx-premium \
             --out lab/out
 
+      - name: Export targeted app implementation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/out/targeted/uae-smali lab/out/targeted/premium-smali lab/out/targeted/uae-java lab/out/targeted/premium-java
+          for rel in \
+            smali/com/mbm_soft/aldahyaplay/ui/movies \
+            smali/com/mbm_soft/aldahyaplay/ui/series \
+            smali/com/mbm_soft/aldahyaplay/ui/series_info \
+            smali/com/mbm_soft/aldahyaplay/ui/movie_info \
+            smali/com/mbm_soft/aldahyaplay/ui/vod_exo \
+            smali/com/mbm_soft/aldahyaplay/ui/vod_vlc \
+            smali/com/mbm_soft/aldahyaplay/adapter \
+            smali/com/mbm_soft/aldahyaplay/data/local/db; do
+            [ -e "lab/decoded-uae/$rel" ] && mkdir -p "lab/out/targeted/uae-smali/$(dirname "$rel")" && cp -a "lab/decoded-uae/$rel" "lab/out/targeted/uae-smali/$rel"
+          done
+          for rel in \
+            smali/com/mbm_soft/premiumtv/ui/movies \
+            smali/com/mbm_soft/premiumtv/ui/series \
+            smali/com/mbm_soft/premiumtv/ui/series_info \
+            smali/com/mbm_soft/premiumtv/ui/movie_info \
+            smali/com/mbm_soft/premiumtv/ui/vod_exo \
+            smali/com/mbm_soft/premiumtv/ui/vod_vlc \
+            smali/com/mbm_soft/premiumtv/adapter \
+            smali/com/mbm_soft/premiumtv/data/local/db; do
+            [ -e "lab/decoded-premium/$rel" ] && mkdir -p "lab/out/targeted/premium-smali/$(dirname "$rel")" && cp -a "lab/decoded-premium/$rel" "lab/out/targeted/premium-smali/$rel"
+          done
+          for rel in \
+            sources/com/mbm_soft/aldahyaplay/ui/movies \
+            sources/com/mbm_soft/aldahyaplay/ui/series \
+            sources/com/mbm_soft/aldahyaplay/ui/series_info \
+            sources/com/mbm_soft/aldahyaplay/ui/movie_info \
+            sources/com/mbm_soft/aldahyaplay/ui/vod_exo \
+            sources/com/mbm_soft/aldahyaplay/ui/vod_vlc \
+            sources/com/mbm_soft/aldahyaplay/adapter \
+            sources/com/mbm_soft/aldahyaplay/data/local/db; do
+            [ -e "lab/jadx-uae/$rel" ] && mkdir -p "lab/out/targeted/uae-java/$(dirname "$rel")" && cp -a "lab/jadx-uae/$rel" "lab/out/targeted/uae-java/$rel"
+          done
+          for rel in \
+            sources/com/mbm_soft/premiumtv/ui/movies \
+            sources/com/mbm_soft/premiumtv/ui/series \
+            sources/com/mbm_soft/premiumtv/ui/series_info \
+            sources/com/mbm_soft/premiumtv/ui/movie_info \
+            sources/com/mbm_soft/premiumtv/ui/vod_exo \
+            sources/com/mbm_soft/premiumtv/ui/vod_vlc \
+            sources/com/mbm_soft/premiumtv/adapter \
+            sources/com/mbm_soft/premiumtv/data/local/db; do
+            [ -e "lab/jadx-premium/$rel" ] && mkdir -p "lab/out/targeted/premium-java/$(dirname "$rel")" && cp -a "lab/jadx-premium/$rel" "lab/out/targeted/premium-java/$rel"
+          done
+
       - name: Validate original UAE can rebuild
         shell: bash
         run: |
