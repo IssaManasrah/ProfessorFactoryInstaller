@@ -30,8 +30,9 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p lab/tools lab/apks lab/out
-          curl -fL --retry 3 -o lab/apks/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
-          curl -fL --retry 3 -o lab/apks/Premium.apk 'https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Premium.apk'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/apks/premium-UAE.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -A "$UA" -H 'Accept: */*' -e 'https://professorsat.com/' -o lab/apks/Premium.apk 'https://professorsat.com/store/models/Big%20Boss%20Ai%20Max/Premium.apk'
           curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
           curl -fL --retry 3 -o lab/tools/jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip'
           unzip -q lab/tools/jadx.zip -d lab/tools/jadx
