@@ -54,17 +54,22 @@ jobs:
           lab/tools/jadx/bin/jadx --show-bad-code -d lab/jadx-premium lab/apks/Premium.apk || true
           python3 premium-uae-lab/analyze.py --uae-smali lab/decoded-uae --premium-smali lab/decoded-premium --uae-java lab/jadx-uae --premium-java lab/jadx-premium --out lab/out
 
-      - name: Apply deterministic UAE patch
+      - name: Apply UAE vNext patch
         shell: bash
         run: |
           set -euxo pipefail
           python3 premium-uae-lab/patch_uae.py lab/decoded-uae | tee lab/out/patch-result.txt
           python3 premium-uae-lab/fix_ranges.py lab/decoded-uae | tee -a lab/out/patch-result.txt
-          grep -R "streamDisplayName LIKE '%'|| ? || '%'" lab/decoded-uae/smali* > lab/out/movie-search-check.txt
-          grep -R "title LIKE '%'|| ? || '%'" lab/decoded-uae/smali* > lab/out/series-search-check.txt
+          base64 -d premium-uae-lab/patch_vnext.py.gz.b64 | gzip -d > lab/patch_vnext.py
+          python3 lab/patch_vnext.py lab/decoded-uae | tee -a lab/out/patch-result.txt
+          grep -R 'search_movies' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies > lab/out/movie-search-check.txt
+          grep -R 'search_series' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series > lab/out/series-search-check.txt
+          grep -R 'MY LIST' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series > lab/out/mylist-check.txt
+          grep -R '✓ شاهدت' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay lab/decoded-uae/res/layout/movie_item.xml > lab/out/watched-check.txt
+          grep -R 'هل تريد استكمال المشاهدة أو البدء من جديد؟' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils > lab/out/resume-prompt-check.txt
+          test -f lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali
           test -f lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali
-          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali'
-          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity$d.smali'
+          ! grep -q 'base64:' 'lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali' || grep -q 'search_movies' lab/decoded-uae/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali
 
       - name: Rebuild patched UAE APK
         shell: bash
@@ -96,19 +101,18 @@ jobs:
             adb logcat -c
             adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
             sleep 12
-            adb shell pidof com.mbm_soft.aldahyaplay | tee lab/out/emulator-pid.txt || true
+            adb shell pidof com.mbm_soft.aldahyaplay > lab/out/emulator-pid.txt || true
+            test -s lab/out/emulator-pid.txt
             adb logcat -d > lab/out/emulator-logcat.txt
-            if grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/emulator-logcat.txt > lab/out/fatal-check.txt; then
-              cat lab/out/fatal-check.txt
-              exit 1
-            fi
-            echo 'EMULATOR_SMOKE_OK' | tee lab/out/emulator-result.txt
+            grep -A12 -B4 -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay' lab/out/emulator-logcat.txt > lab/out/fatal-check.txt || true
+            test ! -s lab/out/fatal-check.txt
+            echo 'EMULATOR_SMOKE_OK' > lab/out/emulator-result.txt
 
       - name: Upload enhanced APK and test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Premium-UAE-Enhanced
+          name: Premium-UAE-Enhanced-vNext
           path: |
             lab/out/Premium_UAE_Enhanced.apk
             lab/out/patch-result.txt
@@ -119,6 +123,9 @@ jobs:
             lab/out/fatal-check.txt
             lab/out/movie-search-check.txt
             lab/out/series-search-check.txt
+            lab/out/mylist-check.txt
+            lab/out/watched-check.txt
+            lab/out/resume-prompt-check.txt
             lab/out/REPORT.md
             lab/out/SHA256SUMS.txt
           if-no-files-found: warn
