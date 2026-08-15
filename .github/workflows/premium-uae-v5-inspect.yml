@@ -43,9 +43,11 @@ jobs:
           for f in \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$m.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali \
+            lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$m.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali \
             lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumeStore.smali \
@@ -58,8 +60,9 @@ jobs:
           done
           grep -RIn -B12 -A18 -E 'ACTIVE CODE ACTIVATION|ACTIVE CODE|CODE ACTIVATION|activation|Activation|MY LIST|search_movies|search_series|ProgressDialog|Loading|loading' lab/decoded/smali lab/decoded/res > lab/out/targets-grep.txt || true
           grep -RIn -B30 -A70 '0x7f0b018a' lab/decoded/smali > lab/out/is-code-id-grep.txt || true
-          grep -RIl '0x7f0b018a' lab/decoded/smali > lab/out/is-code-files.txt || true
-          while IFS= read -r f; do [ -f "$f" ] && cp --parents "$f" lab/out/files/; done < lab/out/is-code-files.txt
+          grep -RIn -B30 -A100 '0x7f0e001e' lab/decoded/smali > lab/out/intro-layout-id-grep.txt || true
+          grep -RIl -E '0x7f0b018a|0x7f0e001e' lab/decoded/smali > lab/out/intro-code-files.txt || true
+          while IFS= read -r f; do [ -f "$f" ] && cp --parents "$f" lab/out/files/; done < lab/out/intro-code-files.txt
           grep -RIl -E 'ACTIVE CODE ACTIVATION|ACTIVE CODE|CODE ACTIVATION|activation|Activation' lab/decoded/smali lab/decoded/res | head -80 > lab/out/activation-files.txt || true
           while IFS= read -r f; do [ -f "$f" ] && cp --parents "$f" lab/out/files/; done < lab/out/activation-files.txt
           grep -RIl 'MY LIST' lab/decoded/smali | head -30 > lab/out/mylist-files.txt || true
