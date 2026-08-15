@@ -1,0 +1,46 @@
+name: Haha Hydra source check
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  source-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Find public Hydra source
+        shell: bash
+        run: |
+          set -u
+          EXPECTED="fd60d7b823825e8f37c3b834861886609fce7c23328073ab533d0cd3973bdc9b"
+          urls=(
+            "https://professorsat.com/hydra2026.apk"
+            "https://www.professorsat.com/hydra2026.apk"
+            "https://shaikhalkar.com/hydra2026.apk"
+            "https://www.shaikhalkar.com/hydra2026.apk"
+            "http://professorsat.com/hydra2026.apk"
+            "http://shaikhalkar.com/hydra2026.apk"
+          )
+          for u in "${urls[@]}"; do
+            echo "Trying $u"
+            rm -f Hydra.apk
+            if curl -fL --connect-timeout 10 --max-time 90 "$u" -o Hydra.apk; then
+              h=$(sha256sum Hydra.apk | awk '{print $1}')
+              s=$(stat -c%s Hydra.apk)
+              echo "Downloaded size=$s sha256=$h"
+              if [[ "$h" == "$EXPECTED" ]]; then
+                echo "MATCH_URL=$u" | tee source-result.txt
+                exit 0
+              fi
+            fi
+          done
+          echo "NO_MATCH" | tee source-result.txt
+          exit 1
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: haha-source-check
+          path: source-result.txt
+          if-no-files-found: ignore
