@@ -1,0 +1,56 @@
+name: Extract HAHA activation core
+on:
+  push:
+    branches: [diag/hahanew-real-apk-final]
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and decode HAHA
+        run: |
+          set -euxo pipefail
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+          curl -sS -L -A "$UA" -e 'https://shaikhalkar.com/' -H 'Accept: application/vnd.android.package-archive,application/octet-stream,*/*' https://shaikhalkar.com/hahanew.apk -o hahanew.apk
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar -o apktool.jar
+          java -jar apktool.jar d -f hahanew.apk -o decoded
+      - name: Extract activation core
+        run: |
+          set -euxo pipefail
+          mkdir -p core
+          files=(
+            decoded/smali/com/mbm_soft/hahaiptv/remote/a.smali
+            decoded/smali/com/mbm_soft/hahaiptv/remote/AppApiHelper.smali
+            decoded/smali/com/mbm_soft/hahaiptv/c/a.smali
+            decoded/smali/com/mbm_soft/hahaiptv/c/c.smali
+            decoded/smali/com/mbm_soft/hahaiptv/ui/intro/g.smali
+            decoded/smali/com/mbm_soft/hahaiptv/QuickPlayerApp.smali
+            decoded/smali/com/mbm_soft/hahaiptv/c/e/m/a.smali
+          )
+          for f in "${files[@]}"; do
+            [ -f "$f" ] && cp "$f" core/$(basename "$(dirname "$f")")_$(basename "$f") || true
+          done
+          cp decoded/res/values/strings.xml core/ || true
+          cp decoded/res/values/public.xml core/ || true
+          # Retrofit annotations and all const strings in app package
+          grep -RIna -B6 -A14 -E 'Lretrofit2/http/|Lc/a/c/a\$j;|baseUrl|const-string' decoded/smali/com/mbm_soft/hahaiptv 2>/dev/null > core/app_strings_and_retrofit.txt || true
+          # Specifically enumerate annotation blocks in remote interface
+          cat decoded/smali/com/mbm_soft/hahaiptv/remote/a.smali > core/remote_interface_full.smali
+          # all small text-ish assets that may contain endpoint config
+          find decoded/assets decoded/res/raw -type f -maxdepth 3 2>/dev/null | while read f; do
+            sz=$(stat -c%s "$f" || echo 9999999)
+            if [ "$sz" -lt 1048576 ]; then
+              strings "$f" | grep -Ei 'http|api|haha|server|host|login|active|code' | head -n 1000 || true
+            fi
+          done > core/assets_strings.txt
+          # native library strings
+          find decoded/lib -type f -name '*.so' 2>/dev/null | while read f; do
+            echo "### $f"
+            strings "$f" | grep -Ei 'https?://|api|haha|server|host|active|code' | head -n 2000 || true
+          done > core/native_strings.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hahanew-activation-core
+          path: core
