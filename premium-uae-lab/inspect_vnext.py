@@ -28,15 +28,18 @@ def add_matches(root, title, predicates, limit=30):
     for score,_,p,txt in found[:limit]:
         sections.append(f'\n===== {title} score={score}: {p} =====\n{txt}\n')
 
-# Exact high-value Java sources
 exact_java=[
  'sources/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity.java',
  'sources/com/mbm_soft/aldahyaplay/ui/movies/d.java',
  'sources/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity.java',
  'sources/com/mbm_soft/aldahyaplay/ui/series/d.java',
  'sources/com/mbm_soft/aldahyaplay/ui/series_info/SeriesInfoActivity.java',
+ 'sources/com/mbm_soft/aldahyaplay/ui/movie_info/MovieInfoActivity.java',
  'sources/com/mbm_soft/aldahyaplay/ui/vod_exo/VodActivity.java',
  'sources/com/mbm_soft/aldahyaplay/ui/vod_vlc/VodVlcActivity.java',
+ 'sources/com/mbm_soft/aldahyaplay/adapter/MovieAdapter.java',
+ 'sources/com/mbm_soft/aldahyaplay/adapter/SeriesAdapter.java',
+ 'sources/com/mbm_soft/aldahyaplay/adapter/EpisodeAdapter.java',
  'sources/com/mbm_soft/aldahyaplay/data/local/db/AppDatabase_Impl.java',
  'resources/res/layout/activity_movies.xml',
  'resources/res/layout/activity_series.xml',
@@ -47,7 +50,6 @@ exact_java=[
 ]
 for rel in exact_java: add('EXACT', java/rel)
 
-# Candidate adapters/view holders and models
 add_matches(java, 'ADAPTER_CANDIDATE', [
     'BaseAdapter','RecyclerView.Adapter','getView(','onBindViewHolder','movie_item','streamDisplayName','episodeName','setText('
 ], limit=45)
@@ -58,17 +60,28 @@ add_matches(java, 'SEARCH_REPOSITORY', [
     'getVodStreams','getSeries','categoryId','catid','search','streamDisplayName','title'
 ], limit=35)
 
-# Exact smali that patch touches + likely database implementations
 for rel in [
  'smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali',
+ 'smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali',
+ 'smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$m.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/series/d.smali',
+ 'smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity$d.smali',
+ 'smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity$m.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/series_info/SeriesInfoActivity.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/series_info/SeriesInfoActivity$a.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/series_info/SeriesInfoActivity$b.smali',
+ 'smali/com/mbm_soft/aldahyaplay/ui/movie_info/MovieInfoActivity.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/MovieAdapter.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/MovieAdapter$MovieViewHolder.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/SeriesAdapter.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/SeriesAdapter$SeriesViewHolder.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/EpisodeAdapter.smali',
+ 'smali/com/mbm_soft/aldahyaplay/adapter/EpisodeAdapter$ViewHolder.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/vod_exo/VodActivity.smali',
  'smali/com/mbm_soft/aldahyaplay/ui/vod_vlc/VodVlcActivity.smali',
+ 'smali/z6/f.smali','smali/z6/g.smali','smali/z6/j.smali','smali/z6/k.smali','smali/z6/a.smali'
 ]: add('SMALI_EXACT', smali/rel)
 add_matches(smali, 'DAO_SMALI', [
     'SELECT * from movie_table','SELECT * from series_table','streamDisplayName','categoryId','catid','favorite =='
