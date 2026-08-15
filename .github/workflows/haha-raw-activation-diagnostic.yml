@@ -1,0 +1,98 @@
+name: Haha raw activation diagnostic
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  raw-activation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: sudo chmod 666 /dev/kvm
+      - name: Download tested Haha APK and apktool
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9247207529/zip -o haha.zip
+          unzip -q haha.zip
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o apktool.jar
+      - name: Inject raw activation logging
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f Haha_VIP_IPTV_TESTED.apk -o decoded >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali')
+          s=p.read_text()
+          start=s.index('.method public loadActiveCodeActivation(Ljava/lang/String;)V')
+          end=s.index('.end method', start)+len('.end method')
+          m=s[start:end]
+          m=m.replace('.locals 5','.locals 7',1)
+          call='''    invoke-static {v2, v1}, Lcom/syria/hydra/api/HydraApiClient;->postFormBytes(Ljava/lang/String;Ljava/lang/String;)[B\n\n    move-result-object v1'''
+          repl='''    const-string v5, "HAHA_REQ_URL"\n\n    invoke-static {v5, v2}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I\n\n    const-string v5, "HAHA_REQ_BODY"\n\n    invoke-static {v5, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I\n\n    invoke-static {v2, v1}, Lcom/syria/hydra/api/HydraApiClient;->postFormBytes(Ljava/lang/String;Ljava/lang/String;)[B\n\n    move-result-object v1'''
+          assert call in m
+          m=m.replace(call,repl,1)
+          point='''    array-length v2, v1\n\n    if-lez v2, :cond_0\n\n    invoke-static {v1}, Lcom/syria/hydra/utils/HydraCrypto;->decryptRawBytes([B)Ljava/lang/String;'''
+          repl2='''    array-length v2, v1\n\n    if-lez v2, :cond_0\n\n    const/4 v5, 0x2\n\n    invoke-static {v1, v5}, Landroid/util/Base64;->encodeToString([BI)Ljava/lang/String;\n\n    move-result-object v5\n\n    const-string v6, "HAHA_RAW_ACTIVATION_BASE64"\n\n    invoke-static {v6, v5}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I\n\n    invoke-static {v1}, Lcom/syria/hydra/utils/HydraCrypto;->decryptRawBytes([B)Ljava/lang/String;'''
+          assert point in m
+          m=m.replace(point,repl2,1)
+          s=s[:start]+m+s[end:]
+          p.write_text(s)
+          PY
+      - name: Rebuild/sign diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar b decoded -o diag-unsigned.apk >/dev/null
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BT/zipalign" -f -p 4 diag-unsigned.apk diag-aligned.apk
+          keytool -genkeypair -keystore diag.jks -storepass android -keypass android -alias diag -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=HahaDiag" >/dev/null 2>&1
+          "$BT/apksigner" sign --ks diag.jks --ks-pass pass:android --key-pass pass:android --out HahaRawDiag.apk diag-aligned.apk
+          "$BT/apksigner" verify --verbose HahaRawDiag.apk
+      - name: Create emulator script
+        shell: bash
+        run: |
+          cat > run.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          adb wait-for-device
+          for i in $(seq 1 120); do [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break; sleep 2; done
+          adb install --no-streaming HahaRawDiag.apk
+          adb shell pm grant com.haha.viptv2 android.permission.READ_MEDIA_IMAGES 2>/dev/null || true
+          adb shell pm grant com.haha.viptv2 android.permission.READ_EXTERNAL_STORAGE 2>/dev/null || true
+          adb shell am start -W -n com.haha.viptv2/com.syria.hydra.ui.intro.IntroActivity >/dev/null
+          sleep 4
+          adb shell input text 777815041991
+          adb logcat -c
+          adb shell input tap 960 560
+          sleep 18
+          adb logcat -b all -d > raw-logcat.txt
+          grep -aE 'HAHA_REQ_URL|HAHA_REQ_BODY|HAHA_RAW_ACTIVATION_BASE64|FAJER_API_LOGIN_RESPONSE|Not able to login' raw-logcat.txt > raw-summary.txt || true
+          cat raw-summary.txt
+          SH
+          chmod +x run.sh
+      - name: Android TV 12 raw activation test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Haha-raw-activation-diagnostic
+          path: |
+            raw-summary.txt
+            raw-logcat.txt
+          if-no-files-found: ignore
