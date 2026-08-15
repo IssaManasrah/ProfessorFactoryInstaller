@@ -54,7 +54,6 @@ jobs:
           EPG = HOST + '/xmltv.php'
           NEWPKG = 'com.haha.viptv2'
 
-          # Manifest: only app identity / authorities. Keep all Java/Smali component class names com.syria.hydra.* intact.
           p = Path('decoded/AndroidManifest.xml')
           s = p.read_text()
           s = s.replace('package="com.syria.hydra"', f'package="{NEWPKG}"', 1)
@@ -64,14 +63,12 @@ jobs:
           s = s.replace('android:authorities="com.syria.hydra.androidx-startup"', f'android:authorities="{NEWPKG}.androidx-startup"')
           p.write_text(s)
 
-          # App label.
           p = Path('decoded/res/values/strings.xml')
           s = p.read_text()
           s, n = re.subn(r'<string name="app_name">.*?</string>', '<string name="app_name">Haha VIP IPTV</string>', s, count=1)
           assert n == 1, 'app_name not patched'
           p.write_text(s)
 
-          # NativeConfig: direct stable URLs. No binary DEX/string-pool patching.
           p = Path('decoded/smali/com/syria/hydra/utils/NativeConfig.smali')
           s = p.read_text()
           old = '''    const-string v0, "DjQeQ0hwZ0QIBjJMMF8MB1cXSSUdGkJfCgoG"\n\n    invoke-static {v0}, Lcom/syria/hydra/utils/HydraCrypto;->decryptString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v0\n\n    sput-object v0, Lcom/syria/hydra/utils/NativeConfig;->CUSTOM_API_URL:Ljava/lang/String;'''
@@ -90,7 +87,6 @@ jobs:
           assert n == 1, 'EPG method not patched'
           p.write_text(s)
 
-          # Firebase must never replace our Xtream host.
           p = Path('decoded/smali/com/syria/hydra/utils/FirebaseConfigManager.smali')
           s = p.read_text()
           pat = r'(?s)\.method private initializeDomainsConfig\(Ljava/lang/String;\)V.*?\.end method'
@@ -99,7 +95,6 @@ jobs:
           assert n == 1, 'Firebase domains method not patched'
           p.write_text(s)
 
-          # Activation endpoint + keep username/password from response, but force host to desired Xtream server.
           p = Path('decoded/smali/com/syria/hydra/ui/intro/IntroViewModel.smali')
           s = p.read_text()
           old = '''    const-string v2, "DjQeQ0hwZ1wFGSVYIVwUHEAdWS4dGkJfH1NGFm8rYztyHgclIgsDI1sT"\n\n    invoke-static {v2}, Lcom/syria/hydra/utils/HydraCrypto;->decryptString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v2'''
@@ -111,7 +106,6 @@ jobs:
           s = s.replace(old_host, f'    const-string v3, "{HOST}"\n\n{old_host}', 1)
           p.write_text(s)
 
-          # Assertions: final decoded source contains required settings.
           joined = '\n'.join([
               Path('decoded/AndroidManifest.xml').read_text(),
               Path('decoded/smali/com/syria/hydra/utils/NativeConfig.smali').read_text(),
@@ -121,6 +115,64 @@ jobs:
           for value in (HOST, ACT, BG, NEWPKG):
               assert value in joined, value
           print('Patch assertions passed')
+          PY
+
+      - name: Apply user-provided Haha icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          base64 -d .github/assets/haha_icon_source.b64 > haha_icon_source.jpg
+          python3 - <<'PY'
+          from PIL import Image, ImageOps
+          from pathlib import Path
+
+          src = Image.open('haha_icon_source.jpg').convert('RGB')
+
+          # Square launcher image. Keep the full user logo centered on white.
+          def square(size, inset=0.90):
+              canvas = Image.new('RGB', (size, size), 'white')
+              logo = src.copy()
+              bound = max(1, int(size * inset))
+              logo.thumbnail((bound, bound), Image.Resampling.LANCZOS)
+              canvas.paste(logo, ((size-logo.width)//2, (size-logo.height)//2))
+              return canvas
+
+          densities = {
+              'mdpi': 48,
+              'hdpi': 72,
+              'xhdpi': 96,
+              'xxhdpi': 144,
+              'xxxhdpi': 192,
+          }
+          for density, size in densities.items():
+              d = Path(f'decoded/res/mipmap-{density}')
+              d.mkdir(parents=True, exist_ok=True)
+              icon = square(size, 0.92)
+              icon.save(d/'ic_launcher.png', optimize=True)
+              icon.save(d/'ic_launcher_round.png', optimize=True)
+              # Adaptive foreground gets extra safe-zone padding.
+              fg = square(size, 0.72)
+              fg.save(d/'ic_launcher_foreground.png', optimize=True)
+
+          # Android TV banner resources are xhdpi in this APK.
+          d = Path('decoded/res/mipmap-xhdpi')
+          banner = Image.new('RGB', (320, 180), 'white')
+          logo = src.copy()
+          logo.thumbnail((245, 155), Image.Resampling.LANCZOS)
+          banner.paste(logo, ((320-logo.width)//2, (180-logo.height)//2))
+          banner.save(d/'ic_banner.png', optimize=True)
+          banner_fg = Image.new('RGB', (320, 180), 'white')
+          logo2 = src.copy()
+          logo2.thumbnail((205, 140), Image.Resampling.LANCZOS)
+          banner_fg.paste(logo2, ((320-logo2.width)//2, (180-logo2.height)//2))
+          banner_fg.save(d/'ic_banner_foreground.png', optimize=True)
+
+          # In-app/splash logo.
+          app_logo = square(512, 0.90)
+          app_logo.save('decoded/res/drawable/app_logo.png', optimize=True)
+
+          print('Haha icon resources generated from user-provided logo')
           PY
 
       - name: Rebuild, align, sign and verify
