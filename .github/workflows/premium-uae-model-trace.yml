@@ -1,0 +1,32 @@
+name: Premium UAE Model Trace
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-model-trace.yml']
+  workflow_dispatch:
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Decode and collect response/config classes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          curl -fL --retry 3 -A "$UA" -e 'https://professorsat.com/' -o lab/app.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/app.apk -o lab/decoded
+          cp lab/decoded/smali/a7/a.smali out/activation-response.smali
+          cp lab/decoded/smali/v6/c.smali out/config-interface.smali
+          cp lab/decoded/smali/y6/a.smali out/prefs-impl.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/remote/AppApiHelper.smali out/AppApiHelper.smali
+          cp lab/decoded/smali/j7/a.smali out/api-interface.smali
+          grep -R -n -E 'SerializedName|JsonProperty|const-string|GPLUS|appgithub|activity|baseUrl|BASE_URL|player_api|host|epg_api' out > out/interesting.txt || true
+          cat out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Model-Trace
+          path: out/
+          retention-days: 7
