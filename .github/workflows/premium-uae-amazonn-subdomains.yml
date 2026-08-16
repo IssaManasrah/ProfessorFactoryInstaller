@@ -12,14 +12,18 @@ jobs:
       - name: Probe likely amazonn.app subdomains
         shell: bash
         run: |
+          set +e
           set -u
           mkdir -p out
           subs=(api app uae gplus plus v12 premium premiumuae server main panel backend stream live media cdn)
           printf 'host\tdns\tget_status\tpost_status\tget_body\tpost_body\n' > out/subdomains.tsv
           for s in "${subs[@]}"; do
             h="$s.amazonn.app"
-            dns=$(getent ahostsv4 "$h" | awk 'NR==1{print $1}')
-            [ -n "$dns" ] || { printf '%s\t-\t-\t-\t-\t-\n' "$h" >> out/subdomains.tsv; continue; }
+            dns=$(getent ahostsv4 "$h" 2>/dev/null | awk 'NR==1{print $1}')
+            if [ -z "$dns" ]; then
+              printf '%s\t-\t-\t-\t-\t-\n' "$h" >> out/subdomains.tsv
+              continue
+            fi
             gb=$(mktemp); pb=$(mktemp)
             gc=$(curl -k -sS --max-time 4 -o "$gb" -w '%{http_code}' "https://$h/V12/GPLUS-API.php" 2>/dev/null || echo ERR)
             pc=$(curl -k -sS --max-time 4 -X POST -d '' -o "$pb" -w '%{http_code}' "https://$h/V12/GPLUS-API.php" 2>/dev/null || echo ERR)
@@ -29,6 +33,7 @@ jobs:
             rm -f "$gb" "$pb"
           done
           cat out/subdomains.tsv
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: Premium-UAE-Amazonn-Subdomains
