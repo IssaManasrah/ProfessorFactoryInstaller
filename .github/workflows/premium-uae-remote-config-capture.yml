@@ -1,0 +1,73 @@
+name: Premium UAE Remote Config Capture
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-remote-config-capture.yml']
+  workflow_dispatch:
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download decode and instrument original UAE
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools lab/out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          curl -fL --retry 3 -A "$UA" -e 'https://professorsat.com/' -o lab/app.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/app.apk -o lab/decoded
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/intro/IntroActivity$a.smali')
+          s=p.read_text()
+          # Increase locals for two temporary registers.
+          s=s.replace('.method public onComplete(Lq5/i;)V\n    .locals 3', '.method public onComplete(Lq5/i;)V\n    .locals 5', 1)
+          needle='''    const-string v1, "activity"\n\n    invoke-virtual {p1, v1}, Lcom/google/firebase/remoteconfig/FirebaseRemoteConfig;->getString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object p1\n\n    invoke-virtual {p1}, Ljava/lang/String;->isEmpty()Z'''
+          repl='''    const-string v1, "activity"\n\n    invoke-virtual {p1, v1}, Lcom/google/firebase/remoteconfig/FirebaseRemoteConfig;->getString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object p1\n\n    const-string v3, "UAE_RC"\n\n    new-instance v4, Ljava/lang/StringBuilder;\n\n    invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V\n\n    const-string v2, "activity="\n\n    invoke-virtual {v4, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n\n    invoke-virtual {v4, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n\n    invoke-virtual {v4}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;\n\n    move-result-object v4\n\n    invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I\n\n    invoke-virtual {p1}, Ljava/lang/String;->isEmpty()Z'''
+          assert needle in s, 'activity block not found'
+          s=s.replace(needle,repl,1)
+          # Also log osd_msg value at second getString use inside non-empty branch.
+          needle2='''    invoke-virtual {v2, v1}, Lcom/google/firebase/remoteconfig/FirebaseRemoteConfig;->getString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v1\n\n    invoke-interface {p1, v1}, Ly6/c;->L0(Ljava/lang/String;)V'''
+          repl2='''    invoke-virtual {v2, v1}, Lcom/google/firebase/remoteconfig/FirebaseRemoteConfig;->getString(Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v1\n\n    const-string v3, "UAE_RC"\n\n    new-instance v4, Ljava/lang/StringBuilder;\n\n    invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V\n\n    const-string v2, "osd_msg="\n\n    invoke-virtual {v4, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n\n    invoke-virtual {v4, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n\n    invoke-virtual {v4}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;\n\n    move-result-object v4\n\n    invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I\n\n    invoke-interface {p1, v1}, Ly6/c;->L0(Ljava/lang/String;)V'''
+          assert needle2 in s, 'osd block not found'
+          s=s.replace(needle2,repl2,1)
+          p.write_text(s)
+          print('INSTRUMENT_OK')
+          PY
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/rc_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/test.keystore -storepass android -keypass android -alias test -dname 'CN=UAE RC Capture,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/rc_unsigned.apk lab/out/rc_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/test.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias test --out lab/out/rc.apk lab/out/rc_aligned.apk
+      - name: Capture current Firebase Remote Config on Android 11
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            sleep 25
+            adb shell service check package | grep -qi found
+            adb shell pm list packages >/dev/null
+            adb push lab/out/rc.apk /data/local/tmp/rc.apk
+            adb shell pm install -r /data/local/tmp/rc.apk || (sleep 15; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/rc.apk)
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 20
+            adb logcat -d > lab/out/logcat.txt
+            grep -E 'UAE_RC|FirebaseRemoteConfig|FirebaseInstallations|FIS_AUTH|ConfigFetch' lab/out/logcat.txt > lab/out/remote-config.txt || true
+            cat lab/out/remote-config.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Premium-UAE-Remote-Config-Capture
+          path: lab/out/
+          retention-days: 7
