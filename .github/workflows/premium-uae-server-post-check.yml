@@ -1,0 +1,34 @@
+name: Premium UAE Server POST Check
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-server-post-check.yml']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check root and POST behavior
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          {
+            date -u
+            for u in \
+              'http://appgithub.cloud/' \
+              'https://appgithub.cloud/' \
+              'http://appgithub.cloud/V12/GPLUS-API.php' \
+              'https://appgithub.cloud/V12/GPLUS-API.php'; do
+              echo "=== $u GET ==="
+              curl -skS -o /tmp/b -D - --max-time 15 "$u" || true
+              echo BODY:; head -c 500 /tmp/b 2>/dev/null || true; echo
+            done
+            echo '=== UAE POST ==='
+            curl -skS -X POST -d 'test=1' -o /tmp/p -D - --max-time 15 'https://appgithub.cloud/V12/GPLUS-API.php' || true
+            echo BODY:; head -c 500 /tmp/p 2>/dev/null || true; echo
+          } | tee out/post-check.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-POST-Check
+          path: out/post-check.txt
+          retention-days: 7
