@@ -1,0 +1,51 @@
+name: Premium UAE V8.2 Fast Package
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v82-fast.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build exact V8.2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v81.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9255161825/zip'
+          unzip -q lab/v81.zip -d lab/src
+          APK="$(find lab/src -type f -name '*.apk' | head -1)"
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f "$APK" -o lab/decoded
+          python3 premium-uae-lab/v82/patch_v82.py lab/decoded | tee lab/out/patch-result.txt
+          grep -q V82_PATCH_OK lab/out/patch-result.txt
+          grep -q 'Powered by : Shaikh Alkar' lab/decoded/res/layout/activity_intro.xml
+          grep -q 'SearchFilter;->movies' lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali
+          grep -q 'SearchFilter;->series' lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/v82_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/v82.keystore -storepass android -keypass android -alias v82 -dname 'CN=Premium UAE V8.2,O=Shaikh Alkar,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/v82_unsigned.apk lab/out/v82_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/v82.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias v82 --out lab/out/premium-UAE_ENHANCED_V8.2.apk lab/out/v82_aligned.apk
+          "$BT/apksigner" verify --verbose lab/out/premium-UAE_ENHANCED_V8.2.apk
+          unzip -t lab/out/premium-UAE_ENHANCED_V8.2.apk >/dev/null
+          sha256sum lab/out/premium-UAE_ENHANCED_V8.2.apk > lab/out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Enhanced-V8.2-Fast
+          path: |
+            lab/out/premium-UAE_ENHANCED_V8.2.apk
+            lab/out/SHA256SUMS.txt
+            lab/out/patch-result.txt
+          retention-days: 7
