@@ -1,0 +1,104 @@
+name: Premium UAE V8.3
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v83.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download exact V8.2 and decode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v82.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9260005702/zip'
+          unzip -q lab/v82.zip -d lab/src
+          APK="$(find lab/src -type f -name '*.apk' | head -1)"
+          test -n "$APK"
+          cp "$APK" lab/v82.apk
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/v82.apk -o lab/decoded
+      - name: Add Shaikh Alkar branding to home
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lab/decoded/res/layout/activity_home.xml')
+          s=p.read_text()
+          marker='<androidx.constraintlayout.widget.ConstraintLayout android:id="@id/flContent"'
+          i=s.find(marker)
+          assert i>=0, 'flContent not found'
+          start=s.find('>', i)+1
+          branding='''\n        <TextView android:text="Powered by : Shaikh Alkar" android:textSize="11.0sp" android:textColor="#b3ffffff" android:gravity="center" android:focusable="false" android:clickable="false" android:importantForAccessibility="no" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginEnd="12.0dp" android:layout_marginBottom="6.0dp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintBottom_toBottomOf="parent" />'''
+          assert 'Powered by : Shaikh Alkar' not in s[s.find(marker):], 'home branding already present'
+          s=s[:start]+branding+s[start:]
+          p.write_text(s)
+          print('HOME_BRANDING_OK')
+          PY
+          grep -q 'Powered by : Shaikh Alkar' lab/decoded/res/layout/activity_intro.xml
+          grep -q 'Powered by : Shaikh Alkar' lab/decoded/res/layout/activity_home.xml
+          cp lab/decoded/res/layout/activity_home.xml lab/out/activity_home_v83.xml
+      - name: Rebuild and sign V8.3
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar lab/tools/apktool.jar b lab/decoded -o lab/out/Premium_UAE_V83_unsigned.apk
+          unzip -t lab/out/Premium_UAE_V83_unsigned.apk | tee lab/out/zip-test.txt
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/v83.keystore -storepass android -keypass android -alias v83 -dname 'CN=Premium UAE V8.3,O=Shaikh Alkar,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_V83_unsigned.apk lab/out/Premium_UAE_V83_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/v83.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias v83 --out lab/out/premium-UAE_ENHANCED_V8.3.apk lab/out/Premium_UAE_V83_aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs lab/out/premium-UAE_ENHANCED_V8.3.apk | tee lab/out/signature.txt
+          sha256sum lab/out/premium-UAE_ENHANCED_V8.3.apk > lab/out/SHA256SUMS.txt
+      - name: Android 12 smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            sleep 25
+            adb shell service check package | grep -qi found
+            adb push lab/out/premium-UAE_ENHANCED_V8.3.apk /data/local/tmp/v83.apk
+            adb shell pm install -r /data/local/tmp/v83.apk || { sleep 15; adb shell pm list packages >/dev/null; adb shell pm install -r /data/local/tmp/v83.apk; }
+            adb logcat -c
+            adb shell monkey -p com.mbm_soft.aldahyaplay -c android.intent.category.LAUNCHER 1 || true
+            sleep 12
+            adb shell pidof com.mbm_soft.aldahyaplay > lab/out/pid.txt || true
+            test -s lab/out/pid.txt
+            adb logcat -d > lab/out/logcat.txt
+            grep -A12 -B4 -E 'AndroidRuntime.*Process: com\.mbm_soft\.aldahyaplay|FATAL EXCEPTION.*com\.mbm_soft\.aldahyaplay' lab/out/logcat.txt > lab/out/app-fatal.txt || true
+            test ! -s lab/out/app-fatal.txt
+            echo ANDROID12_V83_SMOKE_OK > lab/out/emulator-result.txt
+      - name: Upload V8.3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Enhanced-V8.3
+          path: |
+            lab/out/premium-UAE_ENHANCED_V8.3.apk
+            lab/out/activity_home_v83.xml
+            lab/out/zip-test.txt
+            lab/out/signature.txt
+            lab/out/SHA256SUMS.txt
+            lab/out/pid.txt
+            lab/out/logcat.txt
+            lab/out/app-fatal.txt
+            lab/out/emulator-result.txt
+          if-no-files-found: warn
+          retention-days: 7
