@@ -1,0 +1,78 @@
+name: Premium UAE Worker Guide Scan
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-worker-guide-scan.yml']
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Discover worker.guide names and likely routes
+        shell: bash
+        run: |
+          set +e
+          mkdir -p out/tmp
+          curl -fsSL --max-time 15 'https://crt.sh/?q=%25.worker.guide&output=json' -o out/ct.json || echo '[]' > out/ct.json
+          python3 - <<'PY'
+          import json,pathlib
+          names={'worker.guide','www.worker.guide','nextjs.worker.guide'}
+          try:
+            for r in json.load(open('out/ct.json')):
+              for k in ('name_value','common_name'):
+                for n in str(r.get(k,'')).splitlines():
+                  n=n.lower().strip().lstrip('*.')
+                  if n.endswith('.worker.guide') or n=='worker.guide': names.add(n)
+          except: pass
+          pathlib.Path('out/names.txt').write_text('\n'.join(sorted(names))+'\n')
+          PY
+          cat > out/paths.txt <<'EOF'
+          /
+          /V12/
+          /V12/GPLUS-API.php
+          /V12/GPLUS_API.php
+          /V12/GPLUSAPI.php
+          /V12/GPLUS-API
+          /V12/API.php
+          /V12/api.php
+          /V12/index.php
+          /GPLUS-API.php
+          /api/GPLUS-API.php
+          /API/GPLUS-API.php
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          names=[x for x in Path('out/names.txt').read_text().splitlines() if x]
+          paths=[x for x in Path('out/paths.txt').read_text().splitlines() if x]
+          with open('out/jobs.txt','w') as f:
+            i=0
+            for h in names:
+              for p in paths:
+                i+=1; f.write(f'{i}\t{h}\t{p}\n')
+          PY
+          cat > out/one.sh <<'BASH'
+          #!/usr/bin/env bash
+          id="$1"; h="$2"; p="$3"
+          ip=$(getent ahostsv4 "$h" 2>/dev/null | awk 'NR==1{print $1}')
+          if [ -z "$ip" ]; then printf '%s\t%s\t-\t-\t-\t-\n' "$h" "$p" > "out/tmp/$id"; exit 0; fi
+          body=$(mktemp); hdr=$(mktemp)
+          code=$(curl -k -sS --max-time 5 -D "$hdr" -o "$body" -w '%{http_code}' "https://$h$p" 2>/dev/null || echo ERR)
+          bytes=$(wc -c < "$body" | tr -d ' ')
+          ct=$(awk 'BEGIN{IGNORECASE=1}/^content-type:/{sub(/^[^:]*:[ ]*/,"");gsub(/\r/,"");print;exit}' "$hdr" | tr '\t' ' ')
+          pref=$(tr '\n\r\t' '   ' < "$body" | head -c 160 | sed 's/  */ /g')
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$p" "$ip" "$code" "$bytes" "$ct:$pref" > "out/tmp/$id"
+          rm -f "$body" "$hdr"
+          BASH
+          chmod +x out/one.sh
+          cat out/jobs.txt | xargs -P 24 -n 3 bash out/one.sh
+          printf 'host\tpath\tip\tstatus\tbytes\tdetail\n' > out/results.tsv
+          cat out/tmp/* >> out/results.tsv
+          awk -F '\t' 'NR==1 || ($4!="404" && $4!="-" && $4!="000" && $4!~ /ERR/)' out/results.tsv > out/interesting.txt
+          echo '--- NAMES ---'; cat out/names.txt
+          echo '--- INTERESTING ---'; cat out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Worker-Guide-Scan
+          path: out/
+          retention-days: 7
