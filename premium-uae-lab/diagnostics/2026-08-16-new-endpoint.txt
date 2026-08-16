@@ -1,0 +1,22 @@
+Premium UAE new endpoint discovery — 2026-08-16
+
+Current Firebase Remote Config for package com.mbm_soft.aldahyaplay, project gplusplayer-fea65, templateVersion 20, returns:
+- activity=https://nextjs.worker.guide/V12/GPLUS-API.php
+- osd_msg=الافضل بين يديك
+
+This proves the app owners have migrated the UAE API configuration from appgithub.cloud to nextjs.worker.guide through Firebase Remote Config.
+
+Live checks of the configured new endpoint:
+- GET https://nextjs.worker.guide/V12/GPLUS-API.php -> HTTP 404, empty body
+- POST empty -> HTTP 404, empty body
+- POST with form field json=test -> HTTP 404
+- POST with form field json={} -> HTTP 404
+- POST with empty json= -> HTTP 404
+
+DNS for nextjs.worker.guide resolves through Cloudflare (104.21.53.99 / 172.67.211.156 observed across checks). The worker.guide certificate is valid for worker.guide and *.worker.guide.
+
+Nearby V12 routes on worker.guide / www.worker.guide / nextjs.worker.guide often return Cloudflare HTTP 520, while the exact GPLUS-API.php path returns 404. This strongly indicates the new backend/origin deployment or routing is currently incomplete/misconfigured rather than an APK-side problem.
+
+Conclusion:
+Official newly configured endpoint: https://nextjs.worker.guide/V12/GPLUS-API.php
+Current status: configured in Firebase but not serving the API correctly yet.
