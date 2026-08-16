@@ -1,0 +1,25 @@
+Premium UAE server diagnosis — 2026-08-16
+
+Checked from GitHub Actions at 14:54–14:55 UTC (17:54–17:55 Asia/Amman).
+
+DNS:
+- appgithub.cloud -> 172.110.215.111
+- myapping.work -> 172.110.215.111
+
+UAE endpoint:
+- GET http://appgithub.cloud/V12/GPLUS-API.php -> HTTP 404 Not Found
+- GET https://appgithub.cloud/V12/GPLUS-API.php -> HTTP 404 Not Found
+- POST https://appgithub.cloud/V12/GPLUS-API.php -> HTTP 404 Not Found
+- GET http://appgithub.cloud/ -> HTTP 404 Not Found
+- GET https://appgithub.cloud/ -> HTTP 404 Not Found
+
+TLS observed on appgithub.cloud:443:
+- Certificate subject: CloudFlare Origin Certificate
+- Certificate validity started: 2026-08-16 13:48:00 UTC (16:48 Asia/Amman)
+- Certificate SANs identify *.amazonn.app / amazonn.app, not appgithub.cloud
+- Certificate is a Cloudflare Origin CA certificate and is not a normal publicly trusted certificate for appgithub.cloud
+
+Basic comparison endpoint also currently resolves to the same IP and GET /V6APK/API-V6APK.php returns HTTP 404; however the user's basic app continues to play content, so that app may be using cached/session data or a different playback/content path after startup.
+
+Conclusion:
+The UAE failure is server-side. Around 16:48 Asia/Amman on 2026-08-16 the origin/TLS/vhost configuration appears to have changed. appgithub.cloud now reaches a server/default virtual host configured for amazonn.app and the UAE API path no longer exists on the served vhost. This explains why the UAE app could work earlier and then suddenly stop without an APK change.
