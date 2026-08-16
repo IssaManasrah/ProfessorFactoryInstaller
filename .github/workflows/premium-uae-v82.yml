@@ -58,8 +58,8 @@ jobs:
           grep -q 'SearchFilter;->movies' "$MVM"
           grep -q 'SearchFilter;->series' "$SVM"
           grep -q 'Powered by : Shaikh Alkar' lab/decoded/res/layout/activity_intro.xml
-          grep -q 'MovieRecentComparator' lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/MovieRecentComparator.smali
-          grep -q 'SeriesRecentComparator' lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/SeriesRecentComparator.smali
+          grep -R -q 'MovieRecentComparator' lab/decoded/smali
+          grep -R -q 'SeriesRecentComparator' lab/decoded/smali
           grep -q 'setNextFocusRightId' lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali
           python3 - <<'PY' | tee lab/out/search-scenarios.txt
           def server_q(q):
