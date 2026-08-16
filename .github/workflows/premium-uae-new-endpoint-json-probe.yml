@@ -1,0 +1,33 @@
+name: Premium UAE New Endpoint JSON Probe
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-new-endpoint-json-probe.yml']
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe exact configured API using app-like form parameter
+        shell: bash
+        run: |
+          set +e
+          mkdir -p out
+          URL='https://nextjs.worker.guide/V12/GPLUS-API.php'
+          printf 'case\tstatus\tbytes\tctype\tbody\n' > out/result.tsv
+          for spec in 'json=test' 'json={}' 'json=' 'foo=bar'; do
+            body=$(mktemp); hdr=$(mktemp)
+            code=$(curl -k -sS --max-time 10 -D "$hdr" -o "$body" -w '%{http_code}' -X POST --data-urlencode "$spec" "$URL" 2>/dev/null || echo ERR)
+            bytes=$(wc -c < "$body" | tr -d ' ')
+            ct=$(awk 'BEGIN{IGNORECASE=1}/^content-type:/{sub(/^[^:]*:[ ]*/,"");gsub(/\r/,"");print;exit}' "$hdr" | tr '\t' ' ')
+            pref=$(tr '\n\r\t' '   ' < "$body" | head -c 300 | sed 's/  */ /g')
+            printf '%s\t%s\t%s\t%s\t%s\n' "$spec" "$code" "$bytes" "$ct" "$pref" >> out/result.tsv
+            rm -f "$body" "$hdr"
+          done
+          cat out/result.tsv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-New-Endpoint-JSON-Probe
+          path: out/
+          retention-days: 7
