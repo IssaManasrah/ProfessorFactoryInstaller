@@ -1,0 +1,59 @@
+name: Premium UAE V8.1 Fast Package
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v81-fast.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build V8.1 from exact V7 search plus V8 features
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/v7 lab/v8 lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v7.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9253073968/zip'
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v8.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9253511622/zip'
+          unzip -q lab/v7.zip -d lab/v7
+          unzip -q lab/v8.zip -d lab/v8
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/v7/Premium_UAE_V7.apk -o lab/v7-dec
+          java -jar lab/tools/apktool.jar d -f lab/v8/Premium_UAE_V8.apk -o lab/v81-dec
+          BASE=smali/com/mbm_soft/aldahyaplay/ui
+          cp lab/v7-dec/$BASE/movies/d.smali lab/v81-dec/$BASE/movies/d.smali
+          cp lab/v7-dec/$BASE/series/d.smali lab/v81-dec/$BASE/series/d.smali
+          cmp lab/v7-dec/$BASE/movies/d.smali lab/v81-dec/$BASE/movies/d.smali
+          cmp lab/v7-dec/$BASE/series/d.smali lab/v81-dec/$BASE/series/d.smali
+          grep -q 'search_movies' lab/v81-dec/$BASE/movies/d.smali
+          grep -q 'search_series' lab/v81-dec/$BASE/series/d.smali
+          grep -R -q 'MovieRecentComparator' lab/v81-dec/smali/com/mbm_soft/aldahyaplay/utils
+          grep -R -q 'SeriesRecentComparator' lab/v81-dec/smali/com/mbm_soft/aldahyaplay/utils
+          grep -q 'setNextFocusRightId' lab/v81-dec/smali/com/mbm_soft/aldahyaplay/utils/ResumePrompt.smali
+          java -jar lab/tools/apktool.jar b lab/v81-dec -o lab/out/Premium_UAE_V81_unsigned.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          keytool -genkeypair -noprompt -keystore lab/out/v81.keystore -storepass android -keypass android -alias v81 -dname 'CN=Premium UAE V8.1,O=Professor,C=JO' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 lab/out/Premium_UAE_V81_unsigned.apk lab/out/Premium_UAE_V81_aligned.apk
+          "$BT/apksigner" sign --ks lab/out/v81.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias v81 --out lab/out/premium-UAE_ENHANCED_V8.1.apk lab/out/Premium_UAE_V81_aligned.apk
+          "$BT/apksigner" verify --verbose lab/out/premium-UAE_ENHANCED_V8.1.apk
+          unzip -t lab/out/premium-UAE_ENHANCED_V8.1.apk >/dev/null
+          sha256sum lab/out/premium-UAE_ENHANCED_V8.1.apk > lab/out/SHA256SUMS.txt
+          echo V81_SEARCH_RESTORED_AND_PACKAGED_OK > lab/out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Enhanced-V8.1-Fast
+          path: |
+            lab/out/premium-UAE_ENHANCED_V8.1.apk
+            lab/out/SHA256SUMS.txt
+            lab/out/result.txt
+          retention-days: 7
