@@ -1,0 +1,36 @@
+name: Premium UAE POST Candidate Scan
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-post-candidate-scan.yml']
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST probe likely UAE API hosts
+        shell: bash
+        run: |
+          set -u
+          mkdir -p out
+          hosts=(appgithub.cloud amazonn.app www.amazonn.app myapping.work googlefirebase.work localstreamplus.info premiumtv.one 9tv.one beeiraq.com fileandgo.uk go77.uk ppoo.one v111.co)
+          paths=(/V12/GPLUS-API.php /V13/GPLUS-API.php /V12/API.php /GPLUS-API.php)
+          printf 'host\tpath\tstatus\tctype\tbytes\tbody\n' > out/post.tsv
+          for h in "${hosts[@]}"; do
+            for p in "${paths[@]}"; do
+              body=$(mktemp); hdr=$(mktemp)
+              code=$(curl -k -sS --max-time 5 -X POST -d '' -o "$body" -D "$hdr" -w '%{http_code}' "https://$h$p" 2>/dev/null || echo ERR)
+              ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+              bytes=$(wc -c < "$body" | tr -d ' ')
+              prefix=$(tr '\n\r\t' '   ' < "$body" | head -c 180 | sed 's/  */ /g')
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$p" "$code" "$ctype" "$bytes" "$prefix" >> out/post.tsv
+              rm -f "$body" "$hdr"
+            done
+          done
+          awk -F '\t' 'NR==1 || ($3 !~ /^404$/ && $3 !~ /^000$/ && $3 !~ /ERR/)' out/post.tsv | tee out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-POST-Candidates
+          path: out/
+          retention-days: 7
