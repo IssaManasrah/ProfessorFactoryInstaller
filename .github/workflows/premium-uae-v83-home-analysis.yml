@@ -30,8 +30,8 @@ jobs:
           curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
           java -jar lab/tools/apktool.jar d -f lab/v82.apk -o lab/decoded
           cp lab/decoded/AndroidManifest.xml lab/out/AndroidManifest.xml
+          cp lab/decoded/res/layout/activity_home.xml lab/out/activity_home.xml
           grep -R -n -E 'MAIN|LAUNCHER|setContentView|activity_main|home|dashboard|MainActivity' lab/decoded/AndroidManifest.xml lab/decoded/smali/com/mbm_soft/aldahyaplay/ui > lab/out/home-grep.txt || true
-          find lab/decoded/res/layout -maxdepth 1 -type f | sed 's#lab/decoded/##' | sort > lab/out/layout-list.txt
       - uses: actions/upload-artifact@v4
         with:
           name: V83-Home-Analysis
