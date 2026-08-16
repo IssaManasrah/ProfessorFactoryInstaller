@@ -1,0 +1,53 @@
+name: Premium UAE CT Subdomains
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-ct-subdomains.yml']
+  workflow_dispatch:
+jobs:
+  ct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Discover CT names and probe UAE path
+        shell: bash
+        run: |
+          set -u
+          mkdir -p out
+          for domain in amazonn.app appgithub.cloud; do
+            curl -fsSL --max-time 20 "https://crt.sh/?q=%25.${domain}&output=json" -o "out/${domain}.json" || echo '[]' > "out/${domain}.json"
+          done
+          python3 - <<'PY'
+          import json, pathlib
+          names=set()
+          for p in pathlib.Path('out').glob('*.json'):
+              try: data=json.loads(p.read_text(errors='ignore'))
+              except: continue
+              for row in data:
+                  for k in ('name_value','common_name'):
+                      for n in str(row.get(k,'')).splitlines():
+                          n=n.strip().lower().lstrip('*.')
+                          if n and '*' not in n and n.count('.')>=1:
+                              names.add(n)
+          pathlib.Path('out/ct-names.txt').write_text('\n'.join(sorted(names))+'\n')
+          print('\n'.join(sorted(names)))
+          PY
+          : > out/probe.tsv
+          printf 'host\tstatus\tctype\tbytes\tbody\n' >> out/probe.tsv
+          while IFS= read -r h; do
+            [ -n "$h" ] || continue
+            body=$(mktemp); hdr=$(mktemp)
+            code=$(curl -k -sS --max-time 6 -o "$body" -D "$hdr" -w '%{http_code}' "https://$h/V12/GPLUS-API.php" || echo ERR)
+            ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+            bytes=$(wc -c < "$body" | tr -d ' ')
+            prefix=$(tr '\n\r\t' '   ' < "$body" | head -c 180 | sed 's/  */ /g')
+            printf '%s\t%s\t%s\t%s\t%s\n' "$h" "$code" "$ctype" "$bytes" "$prefix" >> out/probe.tsv
+            rm -f "$body" "$hdr"
+          done < out/ct-names.txt
+          echo '=== interesting ==='
+          awk -F '\t' 'NR==1 || ($2 !~ /^404$/ && $2 !~ /^000$/ && $2 !~ /ERR/)' out/probe.tsv | tee out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-CT-Subdomains
+          path: out/
+          retention-days: 7
