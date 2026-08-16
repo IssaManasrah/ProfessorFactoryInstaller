@@ -1,0 +1,41 @@
+name: Premium UAE New Endpoint Confirm
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-new-endpoint-confirm.yml']
+  workflow_dispatch:
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm Firebase-discovered UAE endpoint
+        shell: bash
+        run: |
+          set -u
+          mkdir -p out
+          URL='https://nextjs.worker.guide/V12/GPLUS-API.php'
+          echo '=== DNS ===' | tee out/result.txt
+          getent ahostsv4 nextjs.worker.guide | tee -a out/result.txt || true
+          for method in GET POST; do
+            echo "=== $method ===" | tee -a out/result.txt
+            body="out/${method}.body"; hdr="out/${method}.headers"
+            if [ "$method" = POST ]; then
+              code=$(curl -k -sS --max-time 10 -X POST -d '' -D "$hdr" -o "$body" -w '%{http_code}' "$URL" || echo ERR)
+            else
+              code=$(curl -k -sS --max-time 10 -D "$hdr" -o "$body" -w '%{http_code}' "$URL" || echo ERR)
+            fi
+            echo "status=$code" | tee -a out/result.txt
+            grep -Ei '^(server|content-type|location|cf-ray|date):' "$hdr" | tee -a out/result.txt || true
+            echo -n 'body=' | tee -a out/result.txt
+            tr '\n\r\t' '   ' < "$body" | head -c 500 | tee -a out/result.txt
+            echo | tee -a out/result.txt
+          done
+          echo '=== TLS ===' | tee -a out/result.txt
+          echo | openssl s_client -connect nextjs.worker.guide:443 -servername nextjs.worker.guide 2>/dev/null | openssl x509 -noout -subject -issuer -dates -ext subjectAltName | tee -a out/result.txt || true
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-New-Endpoint-Confirm
+          path: out/
+          retention-days: 7
