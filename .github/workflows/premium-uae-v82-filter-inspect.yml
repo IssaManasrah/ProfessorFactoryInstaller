@@ -1,0 +1,41 @@
+name: Premium UAE V8.2 Filter Inspect
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v82-filter-inspect.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Decode V8.1 and collect filter classes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v81.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9255161825/zip'
+          unzip -q lab/v81.zip -d lab/src
+          APK="$(find lab/src -type f -name '*.apk' | head -1)"
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f "$APK" -o lab/decoded
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/utils/SearchFilter.smali lab/out/SearchFilter.smali || true
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali lab/out/movies-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali lab/out/series-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali lab/out/MoviesActivity-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali lab/out/SeriesActivity-d.smali
+          grep -R -n -E 'SearchFilter|streamDisplayName|title|searchToken|nanoTime|search_movies|search_series' lab/out > lab/out/grep.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V82-Filter-Inspect
+          path: lab/out/
+          retention-days: 7
