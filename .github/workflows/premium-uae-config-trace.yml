@@ -1,0 +1,38 @@
+name: Premium UAE Config Trace
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-config-trace.yml']
+  workflow_dispatch:
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download and decode original UAE
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/tools out
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          curl -fL --retry 3 -A "$UA" -e 'https://professorsat.com/' -o lab/app.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/app.apk -o lab/decoded
+      - name: Trace config setters, keys, and remote config
+        shell: bash
+        run: |
+          set +e
+          ROOT=lab/decoded
+          grep -R -n -B18 -A35 -E 'PREF_KEY_(HOST|PLAYER_API|PLAYER_MOVIES|PLAYER_SERIES|EPG_API)|const-string .*"(host|player_api|player_movies|player_series|epg_api)"' "$ROOT/smali"* > out/pref-key-context.txt
+          grep -R -n -B18 -A40 -E 'FirebaseRemoteConfig;->(getString|getBoolean|getLong|getDouble|getValue)|FirebaseRemoteConfig;->fetch|fetchAndActivate|activate\(' "$ROOT/smali"* > out/firebase-context.txt
+          grep -R -n -B12 -A25 -E 'w0\(|PREF_KEY_HOST|player_api|player_movies|player_series|epg_api' "$ROOT/smali/com/mbm_soft/aldahyaplay" > out/app-config-context.txt
+          grep -R -n -E 'google_app_id|google_api_key|project_id|gcm_defaultSenderId|firebase_database_url' "$ROOT/res/values"* > out/firebase-resources.txt
+          grep -R -n -E 'http://|https://' "$ROOT/smali/com/mbm_soft/aldahyaplay" "$ROOT/res" | head -n 1000 > out/app-urls.txt
+          tar -czf out/config-targets.tar.gz "$ROOT/smali/com/mbm_soft/aldahyaplay" "$ROOT/res/values"* 2>/dev/null
+          wc -l out/*.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Config-Trace
+          path: out/
+          retention-days: 7
