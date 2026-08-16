@@ -1,0 +1,78 @@
+name: Premium UAE Remote Config REST
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-remote-config-rest.yml']
+  workflow_dispatch:
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch Firebase installation token and Remote Config
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          API_KEY='AIzaSyC1RuS-_jx3mFBfGzWgMcsDDtFy0tBE0gw'
+          PROJECT='gplusplayer-fea65'
+          PROJECT_NUM='880962423428'
+          APP_ID='1:880962423428:android:1ede229f150ad57965d0d1'
+          PACKAGE='com.mbm_soft.aldahyaplay'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          curl -fL --retry 3 -A "$UA" -e 'https://professorsat.com/' -o out/app.apk 'https://professorsat.com/store/models/UAE%20Apps/premium-UAE.apk'
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BT/apksigner" verify --print-certs out/app.apk > out/cert.txt
+          CERT=$(awk -F': ' '/Signer #1 certificate SHA-1 digest:/{gsub(":", "", $2); print toupper($2); exit}' out/cert.txt)
+          echo "CERT=$CERT" | tee out/summary.txt
+          FID=$(python3 - <<'PY'
+          import os,base64
+          b=bytearray(os.urandom(17)); b[0]=(b[0]&0x0f)|0x70
+          print(base64.urlsafe_b64encode(bytes(b)).decode().rstrip('='))
+          PY
+          )
+          cat > out/fis-request.json <<EOF
+          {"fid":"$FID","appId":"$APP_ID","authVersion":"FIS_v2","sdkVersion":"a:17.2.0"}
+          EOF
+          curl -sS --max-time 15 -D out/fis-headers.txt -o out/fis-response.json \
+            -X POST "https://firebaseinstallations.googleapis.com/v1/projects/$PROJECT/installations" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json' -H 'Content-Encoding: identity' -H 'Cache-Control: no-cache' \
+            -H "X-Android-Package: $PACKAGE" -H "X-Android-Cert: $CERT" -H "x-goog-api-key: $API_KEY" \
+            --data-binary @out/fis-request.json
+          cat out/fis-response.json | tee -a out/summary.txt
+          TOKEN=$(python3 - <<'PY'
+          import json
+          try:
+              x=json.load(open('out/fis-response.json')); print(x.get('authToken',{}).get('token',''))
+          except Exception: print('')
+          PY
+          )
+          if [ -z "$TOKEN" ]; then echo 'NO_FIS_TOKEN' | tee -a out/summary.txt; exit 0; fi
+          FID2=$(python3 - <<'PY'
+          import json
+          x=json.load(open('out/fis-response.json')); print(x.get('fid',''))
+          PY
+          )
+          cat > out/rc-request.json <<EOF
+          {"appInstanceId":"$FID2","appInstanceIdToken":"$TOKEN","appId":"$APP_ID","countryCode":"JO","languageCode":"ar-JO","platformVersion":"31","timeZone":"Asia/Amman","appVersion":"1.0","appBuild":"1","packageName":"$PACKAGE","sdkVersion":"20.0.0","analyticsUserProperties":{}}
+          EOF
+          curl -sS --max-time 15 -D out/rc-headers.txt -o out/rc-response.json \
+            -X POST "https://firebaseremoteconfig.googleapis.com/v1/projects/$PROJECT_NUM/namespaces/firebase:fetch" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json' \
+            -H "X-Goog-Api-Key: $API_KEY" -H "X-Android-Package: $PACKAGE" -H "X-Android-Cert: $CERT" \
+            -H 'X-Google-GFE-Can-Retry: yes' -H "X-Goog-Firebase-Installations-Auth: $TOKEN" \
+            --data-binary @out/rc-request.json
+          echo '--- RC RESPONSE ---' | tee -a out/summary.txt
+          cat out/rc-response.json | tee -a out/summary.txt
+          python3 - <<'PY' | tee out/entries.txt
+          import json
+          try:
+              x=json.load(open('out/rc-response.json'))
+              for k,v in x.get('entries',{}).items(): print(f'{k}={v}')
+          except Exception as e: print('PARSE_ERROR',e)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Remote-Config-REST
+          path: out/
+          retention-days: 7
