@@ -1,0 +1,70 @@
+name: Premium UAE New Endpoint Scan
+
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-new-endpoint-scan.yml']
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Probe related public hosts and likely API paths
+        shell: bash
+        run: |
+          set -u
+          mkdir -p out
+          hosts=(
+            appgithub.cloud
+            amazonn.app
+            www.amazonn.app
+            myapping.work
+            googlefirebase.work
+            localstreamplus.info
+            premiumtv.one
+            9tv.one
+            beeiraq.com
+            fileandgo.uk
+            go77.uk
+            ppoo.one
+            v111.co
+          )
+          paths=(
+            /
+            /V12/GPLUS-API.php
+            /V13/GPLUS-API.php
+            /V11/GPLUS-API.php
+            /V12/API.php
+            /V12/api.php
+            /GPLUS-API.php
+            /V6APK/API-V6APK.php
+          )
+          : > out/results.tsv
+          printf 'host\tpath\tscheme\tstatus\tcontent_type\tbytes\tredirect\tbody_prefix\n' >> out/results.tsv
+          for h in "${hosts[@]}"; do
+            for p in "${paths[@]}"; do
+              for scheme in http https; do
+                body=$(mktemp)
+                hdr=$(mktemp)
+                code=$(curl -k -sS --max-time 6 -o "$body" -D "$hdr" -w '%{http_code}' "$scheme://$h$p" || echo ERR)
+                ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+                loc=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+                bytes=$(wc -c < "$body" | tr -d ' ')
+                prefix=$(tr '\n\r\t' '   ' < "$body" | head -c 180 | sed 's/  */ /g')
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$p" "$scheme" "$code" "$ctype" "$bytes" "$loc" "$prefix" >> out/results.tsv
+                rm -f "$body" "$hdr"
+              done
+            done
+          done
+          echo '=== NON-404 / INTERESTING ===' > out/interesting.txt
+          awk -F '\t' 'NR==1 || ($4 !~ /^404$/ && $4 !~ /^000$/ && $4 !~ /ERR/)' out/results.tsv >> out/interesting.txt
+          echo '=== DNS ===' > out/dns.txt
+          for h in "${hosts[@]}"; do echo "## $h" >> out/dns.txt; getent ahostsv4 "$h" | head -n 5 >> out/dns.txt || true; done
+          cat out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-New-Endpoint-Scan
+          path: out/
+          retention-days: 7
