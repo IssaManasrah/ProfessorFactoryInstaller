@@ -25,19 +25,28 @@ jobs:
           mkdir -p lab/src lab/tools lab/out
           curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v81.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9255161825/zip'
           unzip -q lab/v81.zip -d lab/src
-          cp lab/src/Premium_UAE_V8.1.apk lab/v81.apk
+          find lab/src -maxdepth 2 -type f -printf '%p\n' | sort | tee lab/out/artifact-files.txt
+          APK="$(find lab/src -maxdepth 2 -type f -name '*.apk' | head -1)"
+          test -n "$APK"
+          cp "$APK" lab/v81.apk
           curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
           java -jar lab/tools/apktool.jar d -f lab/v81.apk -o lab/decoded
-      - name: Collect exact search pipeline
+      - name: Collect exact search and activation pipeline
         shell: bash
         run: |
           set -euxo pipefail
-          cp lab/decoded/smali/a8/g.smali lab/out/a8-g.smali
-          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali lab/out/MoviesActivity-d.smali
-          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali lab/out/SeriesActivity-d.smali
-          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali lab/out/movies-viewmodel-d.smali
-          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali lab/out/series-viewmodel-d.smali
-          grep -R -n -E 'Base64|encode|decode|base64:|searchToken|nanoTime|search_movies|search_series|SearchView' lab/out > lab/out/grep.txt || true
+          for f in \
+            'smali/a8/g.smali' \
+            'smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity$d.smali' \
+            'smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity$d.smali' \
+            'smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali' \
+            'smali/com/mbm_soft/aldahyaplay/ui/series/d.smali'; do
+            cp "lab/decoded/$f" "lab/out/$(basename "$f" | tr '$' '_')"
+          done
+          grep -R -n -E 'Base64|encode|decode|base64:|searchToken|nanoTime|search_movies|search_series|SearchView|length\(\)|rem-int|and-int' lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series lab/decoded/smali/a8 > lab/out/search-grep.txt || true
+          grep -R -n -E 'is_code_checkbox|Active Code|Activation|activation|activate' lab/decoded/res/layout* lab/decoded/res/values* lab/decoded/smali/com/mbm_soft/aldahyaplay | head -400 > lab/out/activation-grep.txt || true
+          grep -R -l 'is_code_checkbox' lab/decoded/res/layout* | tee lab/out/activation-layout-files.txt || true
+          while IFS= read -r f; do cp "$f" lab/out/"$(basename "$f")"; done < lab/out/activation-layout-files.txt
       - uses: actions/upload-artifact@v4
         with:
           name: V82-Parity-Analysis
