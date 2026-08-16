@@ -1,0 +1,76 @@
+name: Premium UAE New Endpoint Scan Fast
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-new-endpoint-scan-fast.yml']
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Parallel probe related hosts
+        shell: bash
+        run: |
+          set -u
+          mkdir -p out/tmp
+          cat > out/targets.txt <<'EOF'
+          appgithub.cloud
+          amazonn.app
+          www.amazonn.app
+          myapping.work
+          googlefirebase.work
+          localstreamplus.info
+          premiumtv.one
+          9tv.one
+          beeiraq.com
+          fileandgo.uk
+          go77.uk
+          ppoo.one
+          v111.co
+          EOF
+          cat > out/paths.txt <<'EOF'
+          /
+          /V12/GPLUS-API.php
+          /V13/GPLUS-API.php
+          /V11/GPLUS-API.php
+          /V12/API.php
+          /V12/api.php
+          /GPLUS-API.php
+          /V6APK/API-V6APK.php
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          hosts=[x.strip() for x in Path('out/targets.txt').read_text().splitlines() if x.strip()]
+          paths=[x.strip() for x in Path('out/paths.txt').read_text().splitlines() if x.strip()]
+          with open('out/jobs.txt','w') as f:
+              i=0
+              for h in hosts:
+                  for p in paths:
+                      for s in ('http','https'):
+                          i+=1; f.write(f'{i}\t{h}\t{p}\t{s}\n')
+          PY
+          cat > out/probe-one.sh <<'BASH'
+          #!/usr/bin/env bash
+          set -u
+          id="$1"; h="$2"; p="$3"; scheme="$4"
+          body=$(mktemp); hdr=$(mktemp)
+          code=$(curl -k -sS --max-time 4 -o "$body" -D "$hdr" -w '%{http_code}' "$scheme://$h$p" 2>/dev/null || echo ERR)
+          ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+          loc=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]*:[ ]*/,""); gsub(/\r/,""); print; exit}' "$hdr" | tr '\t' ' ')
+          bytes=$(wc -c < "$body" | tr -d ' ')
+          prefix=$(tr '\n\r\t' '   ' < "$body" | head -c 160 | sed 's/  */ /g')
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$p" "$scheme" "$code" "$ctype" "$bytes" "$loc" "$prefix" > "out/tmp/$id.tsv"
+          rm -f "$body" "$hdr"
+          BASH
+          chmod +x out/probe-one.sh
+          cat out/jobs.txt | xargs -P 24 -n 4 bash out/probe-one.sh
+          printf 'host\tpath\tscheme\tstatus\tcontent_type\tbytes\tredirect\tbody_prefix\n' > out/results.tsv
+          cat out/tmp/*.tsv >> out/results.tsv
+          awk -F '\t' 'NR==1 || ($4 !~ /^404$/ && $4 !~ /^000$/ && $4 !~ /ERR/)' out/results.tsv > out/interesting.txt
+          cat out/interesting.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-New-Endpoint-Scan-Fast
+          path: out/
+          retention-days: 7
