@@ -1,0 +1,45 @@
+name: Premium UAE V8.2 Parity Analysis
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-v82-parity-analysis.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download V8.1 artifact and decode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p lab/src lab/tools lab/out
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -o lab/v81.zip 'https://api.github.com/repos/IssaManasrah/ProfessorFactoryInstaller/actions/artifacts/9255161825/zip'
+          unzip -q lab/v81.zip -d lab/src
+          cp lab/src/Premium_UAE_V8.1.apk lab/v81.apk
+          curl -fL --retry 3 -o lab/tools/apktool.jar 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar'
+          java -jar lab/tools/apktool.jar d -f lab/v81.apk -o lab/decoded
+      - name: Collect exact search pipeline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp lab/decoded/smali/a8/g.smali lab/out/a8-g.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/MoviesActivity\$d.smali lab/out/MoviesActivity-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/SeriesActivity\$d.smali lab/out/SeriesActivity-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/movies/d.smali lab/out/movies-viewmodel-d.smali
+          cp lab/decoded/smali/com/mbm_soft/aldahyaplay/ui/series/d.smali lab/out/series-viewmodel-d.smali
+          grep -R -n -E 'Base64|encode|decode|base64:|searchToken|nanoTime|search_movies|search_series|SearchView' lab/out > lab/out/grep.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V82-Parity-Analysis
+          path: lab/out/
+          retention-days: 7
