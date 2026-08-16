@@ -1,0 +1,65 @@
+name: Premium UAE Server Diagnostics
+
+on:
+  push:
+    branches: [premium-uae-v8-lab]
+    paths: ['.github/workflows/premium-uae-server-diagnostics.yml']
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: DNS and connectivity diagnostics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          {
+            echo '=== UTC TIME ==='
+            date -u
+            echo
+            echo '=== DNS appgithub.cloud ==='
+            getent ahosts appgithub.cloud || true
+            nslookup appgithub.cloud || true
+            dig +short A appgithub.cloud || true
+            dig +short AAAA appgithub.cloud || true
+            echo
+            echo '=== DNS myapping.work ==='
+            getent ahosts myapping.work || true
+            nslookup myapping.work || true
+            dig +short A myapping.work || true
+            dig +short AAAA myapping.work || true
+            echo
+            echo '=== HTTP UAE endpoint ==='
+            curl -svL --connect-timeout 8 --max-time 20 -o /tmp/uae-body 'http://appgithub.cloud/V12/GPLUS-API.php' 2>&1 || true
+            echo '--- UAE BODY ---'
+            head -c 2000 /tmp/uae-body 2>/dev/null || true
+            echo
+            echo '=== HTTPS UAE endpoint ==='
+            curl -skvL --connect-timeout 8 --max-time 20 -o /tmp/uae-https-body 'https://appgithub.cloud/V12/GPLUS-API.php' 2>&1 || true
+            echo '--- UAE HTTPS BODY ---'
+            head -c 2000 /tmp/uae-https-body 2>/dev/null || true
+            echo
+            echo '=== HTTP BASIC endpoint ==='
+            curl -svL --connect-timeout 8 --max-time 20 -o /tmp/basic-body 'http://myapping.work/V6APK/API-V6APK.php' 2>&1 || true
+            echo '--- BASIC BODY ---'
+            head -c 2000 /tmp/basic-body 2>/dev/null || true
+            echo
+            echo '=== HTTPS BASIC endpoint ==='
+            curl -skvL --connect-timeout 8 --max-time 20 -o /tmp/basic-https-body 'https://myapping.work/V6APK/API-V6APK.php' 2>&1 || true
+            echo '--- BASIC HTTPS BODY ---'
+            head -c 2000 /tmp/basic-https-body 2>/dev/null || true
+            echo
+            echo '=== TLS appgithub.cloud ==='
+            timeout 15 openssl s_client -connect appgithub.cloud:443 -servername appgithub.cloud </dev/null 2>&1 | sed -n '1,80p' || true
+            echo
+            echo '=== TLS myapping.work ==='
+            timeout 15 openssl s_client -connect myapping.work:443 -servername myapping.work </dev/null 2>&1 | sed -n '1,80p' || true
+          } | tee out/diagnostics.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-UAE-Server-Diagnostics
+          path: out/diagnostics.txt
+          retention-days: 7
