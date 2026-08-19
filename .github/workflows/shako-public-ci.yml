@@ -38,6 +38,7 @@ jobs:
         run: |
           rm -rf shako-ci/app
           flutter create --platforms=android --org com.shaikhalkar --project-name shako shako-ci/app
+          rm -rf shako-ci/app/lib shako-ci/app/test
           bash shako-ci/bootstrap.sh shako-ci/app
 
       - name: Configure Android manifest
