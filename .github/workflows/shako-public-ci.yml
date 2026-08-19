@@ -71,6 +71,19 @@ jobs:
         working-directory: shako-ci/app
         run: flutter build apk --debug
 
+      - name: Hash built APK
+        run: sha256sum shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk | tee SHAKO_APK_SHA256.txt
+
+      - name: Upload build-passed APK immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHAKO-v0.5-BUILD-TESTS-PASSED
+          path: |
+            shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk
+            SHAKO_APK_SHA256.txt
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Emulator smoke test
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -92,10 +105,7 @@ jobs:
               exit 1
             fi
 
-      - name: Hash APK
-        run: sha256sum shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk | tee SHAKO_APK_SHA256.txt
-
-      - name: Upload tested APK
+      - name: Upload emulator-tested APK
         uses: actions/upload-artifact@v4
         with:
           name: SHAKO-v0.5-GITHUB-EMULATOR-TESTED
