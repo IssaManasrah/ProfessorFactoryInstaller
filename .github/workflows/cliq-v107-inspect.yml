@@ -2,6 +2,8 @@ name: CliQ v1.0.7 Source Inspect
 on:
   push:
     branches: [ cliq-v107-build ]
+  pull_request:
+    branches: [ main ]
 jobs:
   inspect:
     runs-on: ubuntu-latest
