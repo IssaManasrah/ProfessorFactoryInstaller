@@ -1,0 +1,105 @@
+name: CliQ Offline Retry v1.0.7 Build
+
+on:
+  push:
+    branches: [ cliq-v107-build ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 9.1.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+
+      - name: Install SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Reconstruct CliQ project
+        run: |
+          set -euo pipefail
+          mkdir -p cliq-build/project
+          cat cliq-v107/v107chunk_* | base64 -d > cliq-build/project.zip
+          unzip -q cliq-build/project.zip -d cliq-build/project
+          test -f cliq-build/project/app/build.gradle.kts
+          grep -q 'versionName = "1.0.7"' cliq-build/project/app/build.gradle.kts
+
+      - name: Build debug and release
+        working-directory: cliq-build/project
+        run: gradle --no-daemon assembleDebug assembleRelease --stacktrace
+
+      - name: Prepare Android build tools for final signing
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir -p cliq-build/tools/lib
+          cp "$BT/apksigner" cliq-build/tools/
+          cp "$BT/zipalign" cliq-build/tools/
+          cp "$BT/lib/apksigner.jar" cliq-build/tools/lib/
+          chmod +x cliq-build/tools/apksigner cliq-build/tools/zipalign
+
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Emulator launch smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            APK=cliq-build/project/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r "$APK" | tee cliq-build/install-result.txt
+            adb logcat -c
+            adb shell am start -W -n com.shaikhalkar.cliqmonitor/.MainActivity | tee cliq-build/start-result.txt
+            sleep 10
+            adb shell pidof com.shaikhalkar.cliqmonitor | tee cliq-build/pid.txt
+            test -s cliq-build/pid.txt
+            adb logcat -d > cliq-build/logcat.txt
+            if grep -E "FATAL EXCEPTION|AndroidRuntime.*FATAL|Process: com.shaikhalkar.cliqmonitor.*has died|Force finishing activity.*com.shaikhalkar.cliqmonitor" cliq-build/logcat.txt; then
+              echo "CRASH_GATE=FAIL"
+              exit 1
+            fi
+            echo "CLIQ_V107_LAUNCH_SMOKE=PASS"
+
+      - name: Upload CliQ v1.0.7 build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shaikh-CliQ-v1.0.7-build
+          path: |
+            cliq-build/project/app/build/outputs/apk/debug/app-debug.apk
+            cliq-build/project/app/build/outputs/apk/release/app-release-unsigned.apk
+            cliq-build/tools/
+            cliq-build/install-result.txt
+            cliq-build/start-result.txt
+            cliq-build/pid.txt
+            cliq-build/logcat.txt
+          if-no-files-found: warn
