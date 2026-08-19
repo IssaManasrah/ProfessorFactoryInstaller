@@ -1,0 +1,100 @@
+name: SHAKO Public CI
+
+on:
+  push:
+    branches:
+      - shako-public-ci-v0-5
+    paths:
+      - '.github/workflows/shako-public-ci.yml'
+      - 'shako-ci/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.4'
+          channel: stable
+          cache: true
+
+      - name: Create Android project and restore SHAKO source
+        shell: bash
+        run: |
+          rm -rf shako-ci/app
+          flutter create --platforms=android --org com.shaikhalkar --project-name shako shako-ci/app
+          bash shako-ci/bootstrap.sh shako-ci/app
+
+      - name: Configure Android manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('shako-ci/app/android/app/src/main/AndroidManifest.xml')
+          text = p.read_text()
+          if 'android.permission.INTERNET' not in text:
+              text = text.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />')
+          text = text.replace('android:label="shako"', 'android:label="SHAKO"')
+          p.write_text(text)
+          PY
+
+      - name: Get dependencies
+        working-directory: shako-ci/app
+        run: flutter pub get
+
+      - name: Unit tests
+        working-directory: shako-ci/app
+        run: flutter test
+
+      - name: Analyze
+        working-directory: shako-ci/app
+        continue-on-error: true
+        run: flutter analyze
+
+      - name: Build debug APK
+        working-directory: shako-ci/app
+        run: flutter build apk --debug
+
+      - name: Emulator smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            adb install -r shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk
+            adb logcat -c
+            adb shell monkey -p com.shaikhalkar.shako -c android.intent.category.LAUNCHER 1
+            sleep 10
+            PID=$(adb shell pidof com.shaikhalkar.shako || true)
+            echo "SHAKO PID=$PID"
+            test -n "$PID"
+            adb logcat -d > SHAKO_LOGCAT.txt
+            if grep -A 30 "FATAL EXCEPTION" SHAKO_LOGCAT.txt | grep -q "com.shaikhalkar.shako"; then
+              echo "SHAKO crashed during emulator smoke test"
+              exit 1
+            fi
+
+      - name: Hash APK
+        run: sha256sum shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk | tee SHAKO_APK_SHA256.txt
+
+      - name: Upload tested APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHAKO-v0.5-GITHUB-EMULATOR-TESTED
+          path: |
+            shako-ci/app/build/app/outputs/flutter-apk/app-debug.apk
+            SHAKO_APK_SHA256.txt
+            SHAKO_LOGCAT.txt
+          if-no-files-found: error
+          retention-days: 7
