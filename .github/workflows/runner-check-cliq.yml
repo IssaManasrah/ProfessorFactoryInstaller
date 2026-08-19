@@ -1,0 +1,11 @@
+name: Runner Check CliQ
+on:
+  push:
+    branches: [ runner-check-cliq ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo RUNNER_OK
