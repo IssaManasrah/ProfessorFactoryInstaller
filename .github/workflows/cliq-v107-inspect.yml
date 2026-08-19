@@ -1,0 +1,25 @@
+name: CliQ v1.0.7 Source Inspect
+on:
+  push:
+    branches: [ cliq-v107-build ]
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and inspect queue code
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cliq
+          cat cliq-v107/v107chunk_* | base64 -d > /tmp/cliq.zip
+          unzip -q /tmp/cliq.zip -d /tmp/cliq
+          echo '=== HITS ==='
+          grep -Rni "Store sync pending\|store sync\|sync pending" /tmp/cliq/app/src/main/java || true
+          echo '=== PENDING QUEUE ==='
+          cat /tmp/cliq/app/src/main/java/com/shaikhalkar/cliqmonitor/PendingQueue.java
+          echo '=== QUEUE FLUSHER ==='
+          cat /tmp/cliq/app/src/main/java/com/shaikhalkar/cliqmonitor/QueueFlusher.java
+          echo '=== API CLIENT ==='
+          cat /tmp/cliq/app/src/main/java/com/shaikhalkar/cliqmonitor/ApiClient.java
+          echo '=== SECURE STORE ==='
+          cat /tmp/cliq/app/src/main/java/com/shaikhalkar/cliqmonitor/SecureStore.java
