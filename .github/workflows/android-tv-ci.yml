@@ -1,16 +1,14 @@
-name: Android TV 12 CI
+name: SHAKO API Android Test
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ shako-api-test ]
   workflow_dispatch:
 
 jobs:
-  build-and-tv-smoke:
+  build-and-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -27,6 +25,18 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Verify SHAKO live API
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fsS 'https://shaikhalkar.com/shako-api/api/health.php' | tee shako-health.json
+          grep -q '"ok":true' shako-health.json
+          curl -fsS 'https://shaikhalkar.com/shako-api/api/products.php?limit=1' | tee shako-products.json
+          grep -q '"ok":true' shako-products.json
+
+      - name: Build SHAKO debug APK
+        run: gradle --no-daemon :app:assembleDebug
+
       - name: Enable KVM acceleration
         shell: bash
         run: |
@@ -34,39 +44,50 @@ jobs:
           test -e /dev/kvm
           sudo chmod 666 /dev/kvm
 
-      - name: Build debug APK with Android Gradle Plugin
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Android TV 12 emulator smoke test
+      - name: Android 12 install and launch smoke test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 31
-          target: android-tv
-          arch: x86
-          profile: tv_1080p
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          script: bash .github/scripts/tv-smoke.sh
+          script: |
+            set -euxo pipefail
+            APK=app/build/outputs/apk/debug/app-debug.apk
+            adb install -r "$APK" | tee install-result.txt
+            adb shell am force-stop com.shaikhalkar.shako
+            adb shell monkey -p com.shaikhalkar.shako -c android.intent.category.LAUNCHER 1 | tee start-result.txt
+            sleep 15
+            adb shell pidof com.shaikhalkar.shako | tee pid.txt
+            test -s pid.txt
+            adb shell uiautomator dump /sdcard/window.xml || true
+            adb pull /sdcard/window.xml window.xml || true
+            adb logcat -d > emulator-logcat.txt
+            if grep -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com.shaikhalkar.shako' emulator-logcat.txt; then
+              exit 1
+            fi
 
-      - name: Upload tested APK
+      - name: Upload tested SHAKO APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ProfessorInstaller-AndroidTV12-tested-debug
+          name: SHAKO-API-TESTED-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Upload TV smoke evidence
+      - name: Upload SHAKO smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ProfessorInstaller-AndroidTV12-smoke-evidence
+          name: SHAKO-smoke-evidence
           path: |
-            professor-tv-home.png
-            emulator-logcat.txt
-            emulator-logcat-after-dpad.txt
-            window.xml
+            shako-health.json
+            shako-products.json
             install-result.txt
             start-result.txt
-            package-manager-logcat.txt
+            pid.txt
+            window.xml
+            emulator-logcat.txt
           if-no-files-found: ignore
