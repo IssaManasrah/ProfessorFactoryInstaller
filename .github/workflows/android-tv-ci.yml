@@ -54,9 +54,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           script: |
-            set -eu
-            APK=app/build/outputs/apk/debug/app-debug.apk
-            adb install -r "$APK" | tee install-result.txt
+            adb install -r app/build/outputs/apk/debug/app-debug.apk | tee install-result.txt
             adb shell am force-stop com.shaikhalkar.shako
             adb shell monkey -p com.shaikhalkar.shako -c android.intent.category.LAUNCHER 1 | tee start-result.txt
             sleep 15
@@ -65,9 +63,7 @@ jobs:
             adb shell uiautomator dump /sdcard/window.xml || true
             adb pull /sdcard/window.xml window.xml || true
             adb logcat -d > emulator-logcat.txt
-            if grep -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com.shaikhalkar.shako' emulator-logcat.txt; then
-              exit 1
-            fi
+            if grep -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com.shaikhalkar.shako' emulator-logcat.txt; then exit 1; fi
 
       - name: Upload tested SHAKO APK
         if: success()
