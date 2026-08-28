@@ -25,14 +25,7 @@ jobs:
 
       - name: Prepare project
         run: |
-          rm -rf shako_build shako_project.zip clean.b64
-          tr -cd 'A-Za-z0-9+/=' < shako_project.b64 > clean.b64
-          python3 - <<'PY'
-          import base64
-          s=open('clean.b64','rb').read()
-          s += b'=' * ((4-len(s)%4)%4)
-          open('shako_project.zip','wb').write(base64.b64decode(s, validate=False))
-          PY
+          rm -rf shako_build
           unzip -t shako_project.zip
           mkdir shako_build
           unzip -q shako_project.zip -d shako_build
