@@ -12,7 +12,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -101,16 +100,10 @@ public class ShakoMainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public String assistant(String message, String historyJson) {
+        public String assistant(String message) {
             try {
                 JSONObject body = new JSONObject();
                 body.put("message", message == null ? "" : message.trim());
-                try {
-                    JSONArray history = new JSONArray(historyJson == null ? "[]" : historyJson);
-                    body.put("history", history);
-                } catch (Throwable ignored) {
-                    body.put("history", new JSONArray());
-                }
                 return postJson("assistant.php", body.toString());
             } catch (Throwable e) {
                 return error(e.getClass().getSimpleName(), -1);
