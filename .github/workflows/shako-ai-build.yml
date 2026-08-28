@@ -48,15 +48,19 @@ jobs:
         working-directory: ${{ runner.temp }}/shako
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Prepare APK
+      - name: Prepare APK and signing tools
         shell: bash
         run: |
-          cp "$RUNNER_TEMP/shako/app/build/outputs/apk/debug/app-debug.apk" "$RUNNER_TEMP/SHAKO_AI_v0_2.apk"
-          ls -lh "$RUNNER_TEMP/SHAKO_AI_v0_2.apk"
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP/shako/app/build/outputs/apk/debug/app-debug.apk" "$RUNNER_TEMP/out/SHAKO_AI_v0_2_unsigned-base.apk"
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" "$RUNNER_TEMP/out/apksigner.jar"
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" "$RUNNER_TEMP/out/zipalign"
+          chmod +x "$RUNNER_TEMP/out/zipalign"
+          ls -lh "$RUNNER_TEMP/out"
 
-      - name: Upload APK
+      - name: Upload build bundle
         uses: actions/upload-artifact@v4
         with:
-          name: SHAKO_AI_v0_2_APK
-          path: ${{ runner.temp }}/SHAKO_AI_v0_2.apk
+          name: SHAKO_AI_v0_2_BUILD_BUNDLE
+          path: ${{ runner.temp }}/out/
           if-no-files-found: error
