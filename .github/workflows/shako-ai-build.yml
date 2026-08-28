@@ -1,0 +1,62 @@
+name: Build SHAKO AI APK
+
+on:
+  push:
+    branches: [shako-ai-apk-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Restore SHAKO source
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/shako"
+          base64 -d shako-build/source.tar.xz.b64 > "$RUNNER_TEMP/shako.tar.xz"
+          tar -xJf "$RUNNER_TEMP/shako.tar.xz" -C "$RUNNER_TEMP/shako"
+          test -f "$RUNNER_TEMP/shako/settings.gradle"
+          test -f "$RUNNER_TEMP/shako/app/build.gradle"
+
+      - name: Build APK
+        working-directory: ${{ runner.temp }}/shako
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare APK
+        shell: bash
+        run: |
+          cp "$RUNNER_TEMP/shako/app/build/outputs/apk/debug/app-debug.apk" "$RUNNER_TEMP/SHAKO_AI_v0_2.apk"
+          ls -lh "$RUNNER_TEMP/SHAKO_AI_v0_2.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHAKO_AI_v0_2_APK
+          path: ${{ runner.temp }}/SHAKO_AI_v0_2.apk
+          if-no-files-found: error
