@@ -1,8 +1,8 @@
-name: SHAKO API Android Test
+name: SHAKO Assistant Merged Build
 
 on:
   push:
-    branches: [ shako-api-test ]
+    branches: [ shako-assistant-merged-v1 ]
   workflow_dispatch:
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         run: |
           set +e
           curl -A 'Mozilla/5.0 SHAKO-Test' -sS -D shako-health-headers.txt 'https://shaikhalkar.com/shako-api/api/health.php' -o shako-health.json
-          curl -A 'Mozilla/5.0 SHAKO-Test' -sS -D shako-products-headers.txt 'https://shaikhalkar.com/shako-api/api/products.php?limit=1' -o shako-products.json
+          curl -A 'Mozilla/5.0 SHAKO-Test' -sS -D shako-assistant-headers.txt -H 'Content-Type: application/json' -X POST --data '{"message":"مرحبا"}' 'https://shaikhalkar.com/shako-api/api/assistant.php' -o shako-assistant.json
           exit 0
 
       - name: Build SHAKO debug APK
@@ -57,11 +57,12 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-debug.apk | tee install-result.txt
             adb shell am force-stop com.shaikhalkar.shako
             adb shell monkey -p com.shaikhalkar.shako -c android.intent.category.LAUNCHER 1 | tee start-result.txt
-            sleep 15
+            sleep 12
             adb shell pidof com.shaikhalkar.shako | tee pid.txt
             test -s pid.txt
             adb shell uiautomator dump /sdcard/window.xml || true
             adb pull /sdcard/window.xml window.xml || true
+            grep -q 'شاكو' window.xml || grep -q 'SHAKO' window.xml
             adb logcat -d > emulator-logcat.txt
             if grep -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com.shaikhalkar.shako' emulator-logcat.txt; then exit 1; fi
 
@@ -69,7 +70,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: SHAKO-API-TESTED-APK
+          name: SHAKO-WITH-ASSISTANT-TESTED-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -77,12 +78,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SHAKO-smoke-evidence
+          name: SHAKO-assistant-smoke-evidence
           path: |
             shako-health.json
             shako-health-headers.txt
-            shako-products.json
-            shako-products-headers.txt
+            shako-assistant.json
+            shako-assistant-headers.txt
             install-result.txt
             start-result.txt
             pid.txt
