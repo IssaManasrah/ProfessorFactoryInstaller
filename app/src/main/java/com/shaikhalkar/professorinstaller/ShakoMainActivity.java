@@ -17,6 +17,7 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -99,6 +100,17 @@ public class ShakoMainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String assistant(String message) {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("message", message == null ? "" : message.trim());
+                return postJson("assistant.php", body.toString());
+            } catch (Throwable e) {
+                return error(e.getClass().getSimpleName(), -1);
+            }
+        }
+
+        @JavascriptInterface
         public void openUrl(String url) {
             if (url == null || url.trim().isEmpty()) return;
             try {
@@ -116,29 +128,64 @@ public class ShakoMainActivity extends Activity {
                 connection.setConnectTimeout(10000);
                 connection.setReadTimeout(15000);
                 connection.setRequestProperty("Accept", "application/json");
-                connection.setRequestProperty("User-Agent", "SHAKO-Android/0.1");
+                connection.setRequestProperty("User-Agent", "SHAKO-Android/1.0");
 
                 int code = connection.getResponseCode();
                 InputStream stream = code >= 200 && code < 400
                         ? connection.getInputStream()
                         : connection.getErrorStream();
-                if (stream == null) {
-                    return error("empty_response", code);
-                }
-
-                BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
-                StringBuilder out = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) out.append(line);
-                reader.close();
-
-                if (out.length() == 0) return error("empty_response", code);
-                return out.toString();
+                if (stream == null) return error("empty_response", code);
+                String out = readAll(stream);
+                if (out.isEmpty()) return error("empty_response", code);
+                return out;
             } catch (Throwable e) {
                 return error(e.getClass().getSimpleName(), -1);
             } finally {
                 if (connection != null) connection.disconnect();
             }
+        }
+
+        private String postJson(String path, String jsonBody) {
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL(BASE + path);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(80000);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setRequestProperty("User-Agent", "SHAKO-Android/1.0");
+
+                byte[] bytes = jsonBody.getBytes(StandardCharsets.UTF_8);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(bytes);
+                }
+
+                int code = connection.getResponseCode();
+                InputStream stream = code >= 200 && code < 400
+                        ? connection.getInputStream()
+                        : connection.getErrorStream();
+                if (stream == null) return error("empty_response", code);
+                String out = readAll(stream);
+                if (out.isEmpty()) return error("empty_response", code);
+                return out;
+            } catch (Throwable e) {
+                return error(e.getClass().getSimpleName(), -1);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }
+
+        private String readAll(InputStream stream) throws Exception {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) out.append(line);
+            reader.close();
+            return out.toString();
         }
 
         private String error(String message, int code) {
