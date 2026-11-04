@@ -21,6 +21,9 @@ final class Models {
         String versionName = "";
         long versionCode = 1;
         boolean required;
+        // Controls discovery in "تصفح التطبيقات" only; not programming groups or support jobs.
+        // Older catalogs without this field retain their existing all-visible behavior.
+        boolean showInBrowser = true;
         final List<String> allPackageNames = new ArrayList<>();
 
         static AppInfo fromJson(JSONObject o) {
@@ -37,6 +40,7 @@ final class Models {
             a.versionName = o.optString("versionName", "");
             a.versionCode = o.optLong("versionCode", 1);
             a.required = o.optBoolean("required", false);
+            a.showInBrowser = o.optBoolean("showInBrowser", true);
             JSONArray packages = o.optJSONArray("allPackageNames");
             if (packages != null) {
                 for (int i = 0; i < packages.length(); i++) {
@@ -93,6 +97,14 @@ final class Models {
                 for (int i = 0; i < groups.length(); i++) c.groups.add(GroupInfo.fromJson(groups.optJSONObject(i)));
             }
             return c;
+        }
+
+        List<AppInfo> browseApps() {
+            List<AppInfo> visibleApps = new ArrayList<>();
+            for (AppInfo app : apps) {
+                if (app.showInBrowser) visibleApps.add(app);
+            }
+            return visibleApps;
         }
 
         AppInfo findApp(String id) {
