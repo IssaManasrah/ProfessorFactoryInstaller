@@ -256,7 +256,10 @@ public class MainActivity extends Activity implements InstallCoordinator.Host {
         ScrollView scroll = new ScrollView(this);
         LinearLayout list = verticalList();
         View first = null;
-        for (Models.AppInfo app : catalog.apps) {
+        // Visibility only affects manual app browsing. Programming and support
+        // continue to resolve apps from the complete catalog.
+        java.util.List<Models.AppInfo> visibleApps = catalog.browseApps();
+        for (Models.AppInfo app : visibleApps) {
             boolean installed = InstallCoordinator.isVersionSatisfied(this, app);
             String meta = app.versionName.isEmpty() ? "" : "الإصدار " + app.versionName;
             String status = installed ? "مثبت ✓" : "تثبيت / تحديث";
@@ -270,7 +273,7 @@ public class MainActivity extends Activity implements InstallCoordinator.Host {
             if (first == null) first = card;
         }
 
-        if (catalog.apps.isEmpty()) list.addView(emptyState("لا توجد تطبيقات ظاهرة حاليًا"));
+        if (visibleApps.isEmpty()) list.addView(emptyState("لا توجد تطبيقات ظاهرة حاليًا"));
         scroll.addView(list);
         screen.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
